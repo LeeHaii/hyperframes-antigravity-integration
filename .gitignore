@@ -1,0 +1,8 @@
+.upstream/
+node_modules/
+dist-renderer/
+dist-electron/
+dist-remotion/
+release/
+.vite/
+*.log

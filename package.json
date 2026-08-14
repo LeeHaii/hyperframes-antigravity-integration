@@ -1,0 +1,64 @@
+{
+  "name": "gravity-frames-studio",
+  "version": "1.0.0",
+  "description": "Antigravity-powered HyperFrames desktop video editor",
+  "author": "Gravity Frames Studio",
+  "main": "dist-electron/main.js",
+  "build": {
+    "directories": {
+      "output": "release"
+    },
+    "asarUnpack": [
+      "node_modules/@remotion/compositor-win32-x64-msvc/**/*",
+      "node_modules/hyperframes/**/*",
+      "dist-remotion/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin/yt-dlp.exe",
+        "to": "bin/yt-dlp.exe"
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:web": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build:app": "tsc && vite build && remotion bundle src/remotion/index.ts --out-dir=dist-remotion",
+    "build": "tsc && vite build && remotion bundle src/remotion/index.ts --out-dir=dist-remotion && electron-builder",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hyperframes/player": "^0.7.108",
+    "@remotion/player": "^4.0.165",
+    "@remotion/renderer": "^4.0.165",
+    "axios": "^1.6.8",
+    "clsx": "^2.1.1",
+    "gsap": "^3.15.0",
+    "hyperframes": "^0.7.108",
+    "lucide-react": "^0.379.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "remotion": "^4.0.165",
+    "tailwind-merge": "^2.3.0",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.165",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.19",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5",
+    "vite": "^6.4.3",
+    "vite-plugin-electron": "^0.28.6",
+    "vite-plugin-electron-renderer": "^0.14.5"
+  }
+}
