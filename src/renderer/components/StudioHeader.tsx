@@ -1,57 +1,27 @@
 import React, { useState } from 'react'
-import {
-  Clapperboard,
-  Download,
-  Film,
-  LayoutDashboard,
-  Plus,
-  Redo2,
-  Upload,
-  Undo2,
-} from 'lucide-react'
+import { Code2, Download, Film, MessageSquare, Settings } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../../store/useEditorStore'
 import { WorkspaceMode } from '../../types/editor'
-import ExportDialog from './ExportDialog'
+import ProjectSettingsDialog from './ProjectSettingsDialog'
 
 export default function StudioHeader({
   mode,
   onModeChange,
+  onOpenStudioExport,
 }: {
   mode: WorkspaceMode
   onModeChange: (mode: WorkspaceMode) => void
+  onOpenStudioExport: () => void
 }) {
-  const {
-    projectName,
-    setProjectName,
-    scenes,
-    videoTracks,
-    history,
-    future,
-    undo,
-    redo,
-    addBlankScene,
-    addMediaAssets,
-  } = useEditorStore(
+  const { projectName, setProjectName, scenes } = useEditorStore(
     useShallow((state) => ({
       projectName: state.projectName,
       setProjectName: state.setProjectName,
       scenes: state.scenes,
-      videoTracks: state.videoTracks,
-      history: state.history,
-      future: state.future,
-      undo: state.undo,
-      redo: state.redo,
-      addBlankScene: state.addBlankScene,
-      addMediaAssets: state.addMediaAssets,
     }))
   )
-  const [showExport, setShowExport] = useState(false)
-
-  const importMedia = async () => {
-    const files = await window.electronAPI.openMediaFiles()
-    addMediaAssets(files.map((file) => ({ ...file, id: crypto.randomUUID() })))
-  }
+  const [showSettings, setShowSettings] = useState(false)
 
   return (
     <header className="relative z-[100] flex h-14 shrink-0 items-center border-b border-white/[0.07] bg-[#0b0f17] px-3">
@@ -60,65 +30,94 @@ export default function StudioHeader({
           <Film className="h-4 w-4" />
         </div>
         <div className="mr-2 hidden lg:block">
-          <div className="text-[11px] font-bold tracking-[0.12em] text-white">GRAVITY FRAMES</div>
-          <div className="text-[8px] text-slate-600">Antigravity × HyperFrames</div>
+          <div className="text-[11px] font-bold tracking-[0.12em] text-white">
+            GRAVITY FRAMES
+          </div>
+          <div className="text-[8px] text-slate-600">
+            Antigravity x HyperFrames
+          </div>
         </div>
         <div className="h-6 w-px bg-white/[0.08]" />
         <input
           value={projectName}
           onChange={(event) => setProjectName(event.target.value)}
-          aria-label="Project name"
+          aria-label="Animation name"
           className="w-48 min-w-0 rounded-lg bg-transparent px-2 py-1 text-xs font-medium text-slate-200 outline-none hover:bg-white/5 focus:bg-white/5"
         />
-        <span className="hidden text-[9px] text-slate-700 xl:inline">Autosaved</span>
+        <span className="hidden text-[9px] text-slate-700 xl:inline">
+          Autosaved
+        </span>
       </div>
 
-      <nav className="absolute left-1/2 flex -translate-x-1/2 items-center rounded-xl border border-white/[0.07] bg-black/25 p-1">
-        <button
-          onClick={() => onModeChange('scene')}
-          className={`flex h-8 items-center gap-2 rounded-lg px-3 text-[10px] font-medium transition ${
-            mode === 'scene' ? 'bg-white/10 text-white shadow' : 'text-slate-500 hover:text-slate-200'
-          }`}
-        >
-          <Clapperboard className="h-3.5 w-3.5" /> Scene Lab
-        </button>
-        <button
-          onClick={() => onModeChange('editor')}
-          className={`flex h-8 items-center gap-2 rounded-lg px-3 text-[10px] font-medium transition ${
-            mode === 'editor' ? 'bg-white/10 text-white shadow' : 'text-slate-500 hover:text-slate-200'
-          }`}
-        >
-          <LayoutDashboard className="h-3.5 w-3.5" /> Timeline Editor
-        </button>
+      <nav
+        className="absolute left-1/2 flex -translate-x-1/2 items-center rounded-xl border border-white/[0.07] bg-black/25 p-1"
+        role="tablist"
+        aria-label="Animation workspace"
+      >
+        <WorkspaceTab
+          active={mode === 'chat'}
+          icon={MessageSquare}
+          label="Chat"
+          onClick={() => onModeChange('chat')}
+        />
+        <WorkspaceTab
+          active={mode === 'studio'}
+          icon={Code2}
+          label="Studio"
+          onClick={() => onModeChange('studio')}
+        />
       </nav>
 
       <div className="flex flex-1 items-center justify-end gap-1">
-        <button onClick={undo} disabled={!history.length} className="header-icon-button" title="Undo">
-          <Undo2 className="h-3.5 w-3.5" />
-        </button>
-        <button onClick={redo} disabled={!future.length} className="header-icon-button" title="Redo">
-          <Redo2 className="h-3.5 w-3.5" />
-        </button>
-        <div className="mx-1 h-6 w-px bg-white/[0.07]" />
-        <button onClick={importMedia} className="header-action-button" title="Import videos, images, or audio">
-          <Upload className="h-3.5 w-3.5" /> Import
-        </button>
         <button
-          onClick={() => addBlankScene(videoTracks[0]?.id)}
-          className="header-action-button"
-          title="Add a blank motion scene"
+          onClick={() => setShowSettings(true)}
+          className="header-icon-button"
+          title="App settings"
         >
-          <Plus className="h-3.5 w-3.5" /> Scene
+          <Settings className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={() => setShowExport(true)}
+          onClick={onOpenStudioExport}
           disabled={!scenes.length}
           className="ml-1 flex h-8 items-center gap-1.5 rounded-lg bg-[#79f2c0] px-3 text-[10px] font-semibold text-[#061019] hover:bg-[#91f7cf] disabled:bg-slate-800 disabled:text-slate-600"
+          title="Open the HyperFrames render queue"
         >
-          <Download className="h-3.5 w-3.5" /> Export
+          <Download className="h-3.5 w-3.5" />
+          Export
         </button>
       </div>
-      {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+      {showSettings ? (
+        <ProjectSettingsDialog onClose={() => setShowSettings(false)} />
+      ) : null}
     </header>
+  )
+}
+
+function WorkspaceTab({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`flex h-8 min-w-[104px] items-center justify-center gap-2 rounded-lg px-3 text-[10px] font-medium transition ${
+        active
+          ? 'bg-white/10 text-white shadow'
+          : 'text-slate-500 hover:text-slate-200'
+      }`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
   )
 }

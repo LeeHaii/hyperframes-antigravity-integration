@@ -32,13 +32,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@hyperframes/player": "^0.7.108",
+    "@hyperframes/player": "0.7.108",
     "@remotion/player": "^4.0.165",
     "@remotion/renderer": "^4.0.165",
     "axios": "^1.6.8",
     "clsx": "^2.1.1",
     "gsap": "^3.15.0",
-    "hyperframes": "^0.7.108",
+    "hyperframes": "0.7.108",
     "lucide-react": "^0.379.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

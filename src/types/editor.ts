@@ -1,6 +1,13 @@
 export type AppScreen = 'projects' | 'new-project' | 'transcribing' | 'editor'
 
-export type WorkspaceMode = 'scene' | 'editor'
+export type WorkspaceMode = 'chat' | 'studio'
+
+export interface ChatReferenceImage {
+  id: string
+  name: string
+  path: string
+  relativePath: string
+}
 
 export interface AgentChatMessage {
   id: string
@@ -8,6 +15,7 @@ export interface AgentChatMessage {
   text: string
   createdAt: string
   sceneId?: string
+  referenceImages?: ChatReferenceImage[]
 }
 
 export interface HyperframesSceneState {
@@ -15,6 +23,9 @@ export interface HyperframesSceneState {
   updatedAt: string
   lastPrompt?: string
   renderedPath?: string
+  clipDurationSec?: number
+  compositionCount?: number
+  lastCompositionPath?: string
 }
 
 export type MediaKind = 'video' | 'image' | 'music' | 'sfx'
@@ -156,8 +167,14 @@ export interface ProjectSummary {
 export interface AppSettings {
   projectsDirectory: string
   defaultProjectsDirectory: string
+  renderDirectory: string
+  defaultRenderDirectory: string
+  workingDirectory: string
+  studioProjectsDirectory: string
+  defaultStudioProjectsDirectory: string
   autoStockEnabled: boolean
   cacheSizeBytes: number
+  workingFilesSizeBytes: number
 }
 
 export interface PexelsAutoMatchProgress {
@@ -207,6 +224,10 @@ export interface AntigravityRunRequest {
   conversationId?: string
 }
 
+export interface StudioAntigravityRunRequest extends AntigravityRunRequest {
+  sceneId: string
+}
+
 export interface AntigravityRunResult {
   text: string
   conversationId?: string
@@ -219,6 +240,28 @@ export interface HyperframesRenderRequest {
   projectId: string
   sceneId: string
   html: string
+}
+
+export interface HyperframesStudioRequest {
+  projectId: string
+  sceneId: string
+  html: string
+}
+
+export interface HyperframesStudioAppendRequest {
+  projectId: string
+  sceneId: string
+  html: string
+  label: string
+  preserveCurrent: boolean
+}
+
+export interface HyperframesStudioAppendResult {
+  masterHtml: string
+  compositionPath: string
+  compositionCount: number
+  totalDurationSec: number
+  clipDurationSec: number
 }
 
 export interface ImageSearchResult {
@@ -251,6 +294,7 @@ export interface EncoderCapabilities {
 export interface ExportVideoRequest {
   scenes: SceneSegment[]
   audioPath: string
+  audioStartSec?: number
   audioClips: TimelineAudioClip[]
   subtitleSettings: SubtitleSettings
   subtitles: SubtitleSegment[]
@@ -294,6 +338,9 @@ export interface ElectronAPI {
   launchAntigravityLogin: () => Promise<void>
   openAntigravityInstallDocs: () => Promise<void>
   runAntigravity: (request: AntigravityRunRequest) => Promise<AntigravityRunResult>
+  runStudioAntigravity: (
+    request: StudioAntigravityRunRequest
+  ) => Promise<AntigravityRunResult>
   cancelAntigravity: (requestId: string) => Promise<boolean>
   onAntigravityStream: (
     callback: (event: { requestId: string; stream: 'stdout' | 'stderr'; chunk: string }) => void
@@ -302,6 +349,24 @@ export interface ElectronAPI {
   onHyperframesRenderProgress: (
     callback: (event: { sceneId: string; chunk: string }) => void
   ) => () => void
+  openHyperframesStudio: (
+    request: HyperframesStudioRequest
+  ) => Promise<{ url: string }>
+  readHyperframesStudioHtml: (
+    request: Pick<HyperframesStudioRequest, 'projectId' | 'sceneId'>
+  ) => Promise<string>
+  writeHyperframesStudioHtml: (
+    request: HyperframesStudioRequest
+  ) => Promise<boolean>
+  appendHyperframesStudioComposition: (
+    request: HyperframesStudioAppendRequest
+  ) => Promise<HyperframesStudioAppendResult>
+  closeHyperframesStudio: () => Promise<boolean>
+  openChatReferenceImages: (projectId: string) => Promise<ChatReferenceImage[]>
+  saveChatReferenceImage: (
+    projectId: string,
+    image: { name: string; mimeType: string; data: ArrayBuffer }
+  ) => Promise<ChatReferenceImage>
   openAudioFile: () => Promise<{ path: string; duration: number } | null>
   openMediaFiles: () => Promise<ImportedFile[]>
   getMediaDuration: (filePath: string) => Promise<number | null>
@@ -325,6 +390,11 @@ export interface ElectronAPI {
   getAppSettings: () => Promise<AppSettings>
   chooseProjectsDirectory: () => Promise<AppSettings | null>
   resetProjectsDirectory: () => Promise<AppSettings>
+  chooseRenderDirectory: () => Promise<AppSettings | null>
+  resetRenderDirectory: () => Promise<AppSettings>
+  chooseStudioProjectsDirectory: () => Promise<AppSettings | null>
+  resetStudioProjectsDirectory: () => Promise<AppSettings>
+  openStudioProjectsDirectory: () => Promise<boolean>
   setAutoStockEnabled: (enabled: boolean) => Promise<AppSettings>
   clearCache: () => Promise<AppSettings>
   trimYouTube: (
@@ -337,6 +407,7 @@ export interface ElectronAPI {
   searchImages: (query: string, pexelsKey?: string) => Promise<ImageSearchResult[]>
   searchDuckDuckGoImages: (query: string) => Promise<ImageSearchResult[]>
   searchYouTube: (query: string, apiKey: string) => Promise<YouTubeSearchResult[]>
+  getDefaultExportPath: (defaultName: string) => Promise<string>
   chooseExportPath: (defaultName: string) => Promise<string | null>
   getEncoderCapabilities: () => Promise<EncoderCapabilities>
   exportVideo: (request: ExportVideoRequest) => Promise<string>

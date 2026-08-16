@@ -17,7 +17,13 @@ type PreviewBridgeMessage = {
   message?: string
 }
 
-export default function HyperframesScenePlayer({ scene }: { scene: SceneSegment }) {
+export default function HyperframesScenePlayer({
+  scene,
+  embeddedInTimeline = false,
+}: {
+  scene: SceneSegment
+  embeddedInTimeline?: boolean
+}) {
   const playerRef = useRef<HyperframesPlayer | null>(null)
   const bridgeReadyRef = useRef(false)
   const [ready, setReady] = useState(false)
@@ -69,23 +75,34 @@ export default function HyperframesScenePlayer({ scene }: { scene: SceneSegment 
       const timelineTime = useEditorStore.getState().currentTimeSec
       const localTime = Math.max(0, Math.min(scene.durationSec, timelineTime - scene.startTimeSec))
       player.seek(localTime)
-      setCurrentTimeSec(scene.startTimeSec + localTime)
-      setIsPlaying(false)
+      if (embeddedInTimeline) {
+        if (useEditorStore.getState().isPlaying) void player.play()
+      } else {
+        setCurrentTimeSec(scene.startTimeSec + localTime)
+        setIsPlaying(false)
+      }
     }
     const onTimeUpdate = (event: Event) => {
+      if (embeddedInTimeline) return
       const localTime = Number((event as PlayerEvent).detail?.currentTime ?? player.currentTime)
       if (Number.isFinite(localTime)) setCurrentTimeSec(scene.startTimeSec + localTime)
     }
-    const onPlay = () => setIsPlaying(true)
-    const onPause = () => setIsPlaying(false)
+    const onPlay = () => {
+      if (!embeddedInTimeline) setIsPlaying(true)
+    }
+    const onPause = () => {
+      if (!embeddedInTimeline) setIsPlaying(false)
+    }
     const onEnded = () => {
-      setIsPlaying(false)
-      setCurrentTimeSec(scene.endTimeSec)
+      if (!embeddedInTimeline) {
+        setIsPlaying(false)
+        setCurrentTimeSec(scene.endTimeSec)
+      }
     }
     const onError = (event: Event) => {
       if (bridgeReadyRef.current) return
       setReady(false)
-      setIsPlaying(false)
+      if (!embeddedInTimeline) setIsPlaying(false)
       setError((event as PlayerEvent).detail?.message || 'The HTML preview could not start.')
     }
     player.addEventListener('ready', onReady)
@@ -105,20 +122,26 @@ export default function HyperframesScenePlayer({ scene }: { scene: SceneSegment 
         const timelineTime = useEditorStore.getState().currentTimeSec
         const localTime = Math.max(0, Math.min(scene.durationSec, timelineTime - scene.startTimeSec))
         player.seek(localTime)
+        if (embeddedInTimeline && useEditorStore.getState().isPlaying) {
+          void player.play()
+        }
       } else if (message.type === 'state') {
+        if (embeddedInTimeline) return
         const localTime = Number(message.currentTime)
         if (Number.isFinite(localTime)) setCurrentTimeSec(scene.startTimeSec + localTime)
         setIsPlaying(Boolean(message.isPlaying))
       } else if (message.type === 'play') {
-        setIsPlaying(true)
+        if (!embeddedInTimeline) setIsPlaying(true)
       } else if (message.type === 'pause') {
-        setIsPlaying(false)
+        if (!embeddedInTimeline) setIsPlaying(false)
       } else if (message.type === 'ended') {
-        setIsPlaying(false)
-        setCurrentTimeSec(scene.endTimeSec)
+        if (!embeddedInTimeline) {
+          setIsPlaying(false)
+          setCurrentTimeSec(scene.endTimeSec)
+        }
       } else if (message.type === 'error') {
         setReady(false)
-        setIsPlaying(false)
+        if (!embeddedInTimeline) setIsPlaying(false)
         setError(message.message || 'The HTML preview could not start.')
       }
     }
@@ -132,7 +155,7 @@ export default function HyperframesScenePlayer({ scene }: { scene: SceneSegment 
       player.removeEventListener('error', onError)
       window.removeEventListener('message', onBridgeMessage)
     }
-  }, [scene.id, scene.startTimeSec, scene.endTimeSec, scene.durationSec, setCurrentTimeSec, setIsPlaying])
+  }, [scene.id, scene.startTimeSec, scene.endTimeSec, scene.durationSec, embeddedInTimeline, setCurrentTimeSec, setIsPlaying])
 
   useEffect(() => {
     const player = playerRef.current

@@ -19,6 +19,7 @@ export const Root: React.FC = () => {
           renderScale: 1,
           subtitles: [],
           audioPath: '',
+          audioStartSec: 0,
           audioClips: [],
           subtitleSettings: {
             enabled: true,

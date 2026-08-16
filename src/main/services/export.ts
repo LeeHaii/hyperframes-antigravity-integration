@@ -73,6 +73,7 @@ export async function exportVideo(
           : null,
       })),
       audioPath: assetServer.rewrite(request.audioPath),
+      audioStartSec: request.audioStartSec || 0,
       audioClips: request.audioClips.map((clip) => ({
         ...clip,
         path: assetServer!.rewrite(clip.path),

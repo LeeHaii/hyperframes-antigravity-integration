@@ -152,7 +152,8 @@ async function groqJsonRequest<T>(
 export async function transcribeAudio(
   filePath: string,
   apiKey: string,
-  onProgress: (progress: TranscriptionProgress) => void = () => undefined
+  onProgress: (progress: TranscriptionProgress) => void = () => undefined,
+  temporaryRoot = os.tmpdir()
 ): Promise<SceneSegment[]> {
   const trimmedApiKey = apiKey.trim()
   if (!trimmedApiKey) throw new Error('A Groq API key is required.')
@@ -162,8 +163,9 @@ export async function transcribeAudio(
     throw new Error('The voiceover duration could not be measured.')
   }
 
+  await fs.mkdir(temporaryRoot, { recursive: true })
   const temporaryDirectory = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'rhymx-transcription-')
+    path.join(temporaryRoot, 'rhymx-transcription-')
   )
 
   try {
@@ -360,7 +362,7 @@ export async function transcribeAudio(
     console.error('Groq transcription error:', error)
     throw error
   } finally {
-    await removeTemporaryDirectory(temporaryDirectory)
+    await removeTemporaryDirectory(temporaryDirectory, temporaryRoot)
   }
 }
 
@@ -883,12 +885,12 @@ function fallbackKeywords(text: string) {
   return words.length ? [words.join(' ')] : ['general background video']
 }
 
-async function removeTemporaryDirectory(directory: string) {
+async function removeTemporaryDirectory(directory: string, temporaryRoot: string) {
   const resolvedDirectory = path.resolve(directory)
-  const temporaryRoot = path.resolve(os.tmpdir())
+  const resolvedTemporaryRoot = path.resolve(temporaryRoot)
   if (
     path.basename(resolvedDirectory).startsWith('rhymx-transcription-') &&
-    resolvedDirectory.startsWith(`${temporaryRoot}${path.sep}`)
+    resolvedDirectory.startsWith(`${resolvedTemporaryRoot}${path.sep}`)
   ) {
     try {
       await fs.rm(resolvedDirectory, {

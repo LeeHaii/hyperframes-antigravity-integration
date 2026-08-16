@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   launchAntigravityLogin: () => ipcRenderer.invoke('antigravity-login'),
   openAntigravityInstallDocs: () => ipcRenderer.invoke('antigravity-install-docs'),
   runAntigravity: (request: any) => ipcRenderer.invoke('antigravity-run', request),
+  runStudioAntigravity: (request: any) =>
+    ipcRenderer.invoke('antigravity-run-studio', request),
   cancelAntigravity: (requestId: string) =>
     ipcRenderer.invoke('antigravity-cancel', requestId),
   onAntigravityStream: (callback: (event: any) => void) => {
@@ -19,6 +21,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('hyperframes-render-progress', listener)
     return () => ipcRenderer.removeListener('hyperframes-render-progress', listener)
   },
+  openHyperframesStudio: (request: any) =>
+    ipcRenderer.invoke('hyperframes-studio-open', request),
+  readHyperframesStudioHtml: (request: any) =>
+    ipcRenderer.invoke('hyperframes-studio-read', request),
+  writeHyperframesStudioHtml: (request: any) =>
+    ipcRenderer.invoke('hyperframes-studio-write', request),
+  appendHyperframesStudioComposition: (request: any) =>
+    ipcRenderer.invoke('hyperframes-studio-append-composition', request),
+  closeHyperframesStudio: () => ipcRenderer.invoke('hyperframes-studio-close'),
+  openChatReferenceImages: (projectId: string) =>
+    ipcRenderer.invoke('open-chat-reference-images', projectId),
+  saveChatReferenceImage: (projectId: string, image: any) =>
+    ipcRenderer.invoke('save-chat-reference-image', projectId, image),
   openAudioFile: () => ipcRenderer.invoke('open-audio-file'),
   openMediaFiles: () => ipcRenderer.invoke('open-media-files'),
   getMediaDuration: (filePath: string) => ipcRenderer.invoke('get-media-duration', filePath),
@@ -45,6 +60,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppSettings: () => ipcRenderer.invoke('get-app-settings'),
   chooseProjectsDirectory: () => ipcRenderer.invoke('choose-projects-directory'),
   resetProjectsDirectory: () => ipcRenderer.invoke('reset-projects-directory'),
+  chooseRenderDirectory: () => ipcRenderer.invoke('choose-render-directory'),
+  resetRenderDirectory: () => ipcRenderer.invoke('reset-render-directory'),
+  chooseStudioProjectsDirectory: () =>
+    ipcRenderer.invoke('choose-studio-projects-directory'),
+  resetStudioProjectsDirectory: () =>
+    ipcRenderer.invoke('reset-studio-projects-directory'),
+  openStudioProjectsDirectory: () =>
+    ipcRenderer.invoke('open-studio-projects-directory'),
   setAutoStockEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('set-auto-stock-enabled', enabled),
   clearCache: () => ipcRenderer.invoke('clear-cache'),
@@ -64,6 +87,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('search-duckduckgo-images', query),
   searchYouTube: (query: string, apiKey: string) =>
     ipcRenderer.invoke('search-youtube', query, apiKey),
+  getDefaultExportPath: (defaultName: string) =>
+    ipcRenderer.invoke('get-default-export-path', defaultName),
   chooseExportPath: (defaultName: string) =>
     ipcRenderer.invoke('choose-export-path', defaultName),
   getEncoderCapabilities: () => ipcRenderer.invoke('get-encoder-capabilities'),

@@ -50,6 +50,7 @@ export const MainComposition: React.FC<{
   scenes: SceneSegment[]
   subtitles?: SubtitleSegment[]
   audioPath: string
+  audioStartSec?: number
   audioClips?: TimelineAudioClip[]
   subtitleSettings?: SubtitleSettings
   videoTracks?: VideoTrack[]
@@ -60,6 +61,7 @@ export const MainComposition: React.FC<{
   scenes,
   subtitles = [],
   audioPath,
+  audioStartSec = 0,
   audioClips = [],
   subtitleSettings = defaultSubtitleSettings,
   videoTracks = [],
@@ -83,7 +85,11 @@ export const MainComposition: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: '#07080b' }}>
       {audioPath && voiceTrackSettings.visible && !voiceTrackSettings.muted && (
-        <Audio src={mediaSource(audioPath)} pauseWhenBuffering />
+        <Audio
+          src={mediaSource(audioPath)}
+          trimBefore={Math.max(0, Math.round(audioStartSec * fps))}
+          pauseWhenBuffering
+        />
       )}
 
       {audioTrackSettings.visible &&

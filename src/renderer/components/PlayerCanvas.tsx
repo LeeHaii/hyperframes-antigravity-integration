@@ -94,9 +94,36 @@ export default function PlayerCanvas({ sceneOnly = false }: { sceneOnly?: boolea
   const qualitySize = QUALITY_SIZES[quality]
   const activeScene = scenes.find((scene) => scene.id === activeSceneId)
   const hyperframesScene =
-    activeScene?.hyperframes?.html && (sceneOnly || !activeScene.hyperframes.renderedPath)
-      ? activeScene
-      : null
+    sceneOnly && activeScene?.hyperframes?.html ? activeScene : null
+  const [timelineHyperframesSceneId, setTimelineHyperframesSceneId] = useState<
+    string | null
+  >(null)
+  const timelineHyperframesScene = sceneOnly
+    ? null
+    : scenes.find((scene) => scene.id === timelineHyperframesSceneId) || null
+
+  useEffect(() => {
+    if (sceneOnly) {
+      setTimelineHyperframesSceneId(null)
+      return
+    }
+    const updateLiveScene = (timeSec: number) => {
+      const liveScene = scenes.find(
+        (scene) =>
+          Boolean(scene.hyperframes?.html) &&
+          !scene.hyperframes?.renderedPath &&
+          timeSec >= scene.startTimeSec &&
+          timeSec < scene.endTimeSec
+      )
+      setTimelineHyperframesSceneId((current) =>
+        current === (liveScene?.id || null) ? current : liveScene?.id || null
+      )
+    }
+    updateLiveScene(useEditorStore.getState().currentTimeSec)
+    return useEditorStore.subscribe((state) => {
+      updateLiveScene(state.currentTimeSec)
+    })
+  }, [sceneOnly, scenes])
 
   const totalDurationSec = useMemo(() => {
     const sceneEnd = scenes.reduce((max, scene) => Math.max(max, scene.endTimeSec), 0)
@@ -263,18 +290,33 @@ export default function PlayerCanvas({ sceneOnly = false }: { sceneOnly?: boolea
                 </div>
               </>
             ) : (
-              <Player
-                ref={playerRef}
-                component={MainComposition}
-                inputProps={inputProps}
-                durationInFrames={durationInFrames}
-                fps={30}
-                compositionWidth={qualitySize.width}
-                compositionHeight={qualitySize.height}
-                style={{ width: '100%', height: '100%' }}
-                className={`preview-quality-${quality}`}
-                controls={false}
-              />
+              <>
+                <Player
+                  ref={playerRef}
+                  component={MainComposition}
+                  inputProps={inputProps}
+                  durationInFrames={durationInFrames}
+                  fps={30}
+                  compositionWidth={qualitySize.width}
+                  compositionHeight={qualitySize.height}
+                  style={{ width: '100%', height: '100%' }}
+                  className={`preview-quality-${quality}`}
+                  controls={false}
+                />
+                {timelineHyperframesScene ? (
+                  <>
+                    <div className="absolute inset-0 z-20">
+                      <HyperframesScenePlayer
+                        scene={timelineHyperframesScene}
+                        embeddedInTimeline
+                      />
+                    </div>
+                    <div className="pointer-events-none absolute left-3 top-3 z-50 flex items-center gap-1.5 rounded-full border border-emerald-300/20 bg-black/65 px-2.5 py-1 text-[9px] font-medium uppercase tracking-[0.16em] text-emerald-200 backdrop-blur">
+                      <Code2 className="h-3 w-3" /> Live scene in full timeline
+                    </div>
+                  </>
+                ) : null}
+              </>
             )}
             {isRefreshingMedia && (
               <div className="absolute inset-0 z-40 pointer-events-none flex items-center justify-center bg-black/20">

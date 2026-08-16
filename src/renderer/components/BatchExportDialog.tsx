@@ -32,11 +32,19 @@ export default function BatchExportDialog({
   const resolution = resolutions[resolutionIndex]
 
   useEffect(() => {
+    let cancelled = false
     window.electronAPI.getEncoderCapabilities().then((detected) => {
+      if (cancelled) return
       setCapabilities(detected)
       if (detected.nvenc) setEncoder('nvenc')
     })
+    window.electronAPI.getAppSettings().then((settings) => {
+      if (!cancelled) setOutputDirectory((current) => current || settings.renderDirectory)
+    })
     window.electronAPI.onBatchExportProgress(setProgress)
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const selectedProjects = useMemo(
@@ -214,7 +222,7 @@ export default function BatchExportDialog({
             <label className="text-[10px] text-slate-500">Output folder</label>
             <div className="mt-1.5 flex gap-2">
               <div className="h-9 flex-1 min-w-0 rounded-lg border border-white/10 bg-[#0d0f14] px-3 flex items-center text-[10px] text-slate-400 truncate">
-                {outputDirectory || 'Choose a folder for all rendered MP4 files'}
+                {outputDirectory || 'Preparing the default render folder…'}
               </div>
               <button
                 disabled={isExporting}

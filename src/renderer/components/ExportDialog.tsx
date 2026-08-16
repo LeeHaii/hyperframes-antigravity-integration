@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Cpu, FolderOpen, MonitorUp, X } from 'lucide-react'
-import { EncoderCapabilities, ExportEncoder } from '../../types/editor'
+import {
+  EncoderCapabilities,
+  ExportEncoder,
+  SceneSegment,
+  SubtitleSegment,
+  TimelineAudioClip,
+} from '../../types/editor'
 import { useEditorStore } from '../../store/useEditorStore'
 
 const resolutionOptions = [
@@ -11,10 +17,17 @@ const resolutionOptions = [
   { label: '2160p 4K', width: 3840, height: 2160, bitrate: '35M' },
 ]
 
-export default function ExportDialog({ onClose }: { onClose: () => void }) {
+export default function ExportDialog({
+  scope,
+  onClose,
+}: {
+  scope: 'scene' | 'timeline'
+  onClose: () => void
+}) {
   const {
     projectName,
     scenes,
+    activeSceneId,
     videoTracks,
     voiceTrackSettings,
     audioTrackSettings,
@@ -28,6 +41,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
     useShallow((state) => ({
       projectName: state.projectName,
       scenes: state.scenes,
+      activeSceneId: state.activeSceneId,
       videoTracks: state.videoTracks,
       voiceTrackSettings: state.voiceTrackSettings,
       audioTrackSettings: state.audioTrackSettings,
@@ -39,7 +53,13 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
       setExportProgress: state.setExportProgress,
     }))
   )
-  const [name, setName] = useState(projectName.trim() || 'AI Video')
+  const activeScene = scenes.find((scene) => scene.id === activeSceneId)
+  const exportLabel = scope === 'scene' ? 'scene' : 'timeline'
+  const initialName =
+    scope === 'scene'
+      ? `${projectName.trim() || 'AI Video'} - ${activeScene?.transcriptText?.trim() || 'scene'}`
+      : projectName.trim() || 'AI Video'
+  const [name, setName] = useState(initialName)
   const [outputPath, setOutputPath] = useState('')
   const [resolutionIndex, setResolutionIndex] = useState(1)
   const [videoBitrate, setVideoBitrate] = useState('10M')
@@ -50,12 +70,22 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const resolution = resolutionOptions[resolutionIndex]
 
   useEffect(() => {
+    let cancelled = false
     window.electronAPI.getEncoderCapabilities().then((detected) => {
+      if (cancelled) return
       setCapabilities(detected)
       if (detected.nvenc) setEncoder('nvenc')
     })
+    window.electronAPI
+      .getDefaultExportPath(`${safeName(initialName)}.mp4`)
+      .then((defaultPath) => {
+        if (!cancelled) setOutputPath((current) => current || defaultPath)
+      })
     window.electronAPI.onExportProgress((progress) => setExportProgress(progress))
-  }, [setExportProgress])
+    return () => {
+      cancelled = true
+    }
+  }, [initialName, setExportProgress])
 
   const encoderSummary = useMemo(() => {
     if (!capabilities) return 'Checking your graphics hardware…'
@@ -69,7 +99,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   }
 
   const startExport = async () => {
-    if (!audioFile || !outputPath) return
+    if (!outputPath || scenes.length === 0 || (scope === 'scene' && !activeScene)) return
     setIsExporting(true)
     setExportProgress(0)
     setStatus(
@@ -78,12 +108,78 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
         : 'Preparing CPU render…'
     )
     try {
+      let exportScenes = scenes
+      let exportSubtitles = subtitles
+      let exportAudioClips = audioClips
+      let audioStartSec = 0
+
+      const currentProjectId = useEditorStore.getState().projectId
+      const renderAnimationScene = async (
+        scene: SceneSegment,
+        progressLabel: string
+      ): Promise<SceneSegment> => {
+        if (!scene.hyperframes?.html) return scene
+        if (!currentProjectId) throw new Error('No project is open.')
+        setStatus(progressLabel)
+        const renderedPath = await window.electronAPI.renderHyperframesScene({
+          projectId: currentProjectId,
+          sceneId: scene.id,
+          html: scene.hyperframes.html,
+        })
+        return {
+          ...scene,
+          media: {
+            id: `scene-export-${scene.id}`,
+            type: 'local_video',
+            sourceUrl: renderedPath,
+            thumbnailUrl: renderedPath,
+            title: 'Rendered HyperFrames scene',
+            sourceStartSec: 0,
+            sourceDurationSec: scene.durationSec,
+          },
+        }
+      }
+
+      if (scope === 'scene' && activeScene) {
+        const sceneForExport = await renderAnimationScene(
+          activeScene,
+          'Rendering the selected HyperFrames scene...'
+        )
+        setStatus('Preparing scene composition...')
+        const normalized = normalizeSceneExport(
+          sceneForExport,
+          subtitles,
+          audioClips
+        )
+        exportScenes = normalized.scenes
+        exportSubtitles = normalized.subtitles
+        exportAudioClips = normalized.audioClips
+        audioStartSec = activeScene.startTimeSec
+      } else if (scope === 'timeline') {
+        const animationSceneCount = scenes.filter(
+          (scene) => Boolean(scene.hyperframes?.html)
+        ).length
+        let animationSceneIndex = 0
+        exportScenes = []
+        for (const scene of scenes) {
+          if (scene.hyperframes?.html) animationSceneIndex += 1
+          exportScenes.push(
+            await renderAnimationScene(
+              scene,
+              `Rendering animation ${animationSceneIndex} of ${animationSceneCount}...`
+            )
+          )
+        }
+        setStatus('Preparing the complete animation...')
+      }
+
       const renderedPath = await window.electronAPI.exportVideo({
-        scenes,
-        audioPath: audioFile.path,
-        audioClips,
+        scenes: exportScenes,
+        audioPath: audioFile?.path || '',
+        audioStartSec,
+        audioClips: exportAudioClips,
         subtitleSettings,
-        subtitles,
+        subtitles: exportSubtitles,
         videoTracks,
         voiceTrackSettings,
         audioTrackSettings,
@@ -118,7 +214,9 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
         <div className="h-14 flex items-center justify-between px-5 border-b border-white/8">
           <div className="flex items-center gap-2">
             <MonitorUp className="h-4 w-4 text-violet-400" />
-            <h2 className="text-sm font-semibold">Export video</h2>
+            <h2 className="text-sm font-semibold">
+              Export {exportLabel}
+            </h2>
           </div>
           <button
             onClick={cancel}
@@ -165,7 +263,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
             <label className="text-[10px] text-slate-500">Export path</label>
             <div className="mt-1.5 flex gap-2">
               <div className="flex-1 min-w-0 h-9 rounded-lg border border-white/10 bg-[#0d0f14] px-3 flex items-center text-[10px] text-slate-400 truncate">
-                {outputPath || 'Choose where to save the MP4 file'}
+                {outputPath || 'Preparing the default render path…'}
               </div>
               <button
                 onClick={choosePath}
@@ -263,10 +361,17 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={startExport}
-            disabled={isExporting || !outputPath || scenes.length === 0}
+            disabled={
+              isExporting ||
+              !outputPath ||
+              scenes.length === 0 ||
+              (scope === 'scene' && !activeScene)
+            }
             className="h-9 px-5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-xs font-medium"
           >
-            {isExporting ? `Exporting ${Math.round(exportProgress || 0)}%` : 'Export'}
+            {isExporting
+              ? `Exporting ${Math.round(exportProgress || 0)}%`
+              : `Export ${exportLabel}`}
           </button>
         </div>
       </div>
@@ -276,4 +381,57 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
 
 function safeName(value: string) {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || 'AI Video'
+}
+
+function normalizeSceneExport(
+  scene: SceneSegment,
+  subtitles: SubtitleSegment[],
+  audioClips: TimelineAudioClip[]
+) {
+  const sceneStart = scene.startTimeSec
+  const sceneEnd = scene.endTimeSec
+  const duration = Math.max(0.1, scene.durationSec)
+  const normalizedScene: SceneSegment = {
+    ...scene,
+    startTimeSec: 0,
+    endTimeSec: duration,
+    durationSec: duration,
+  }
+  const normalizedSubtitles = subtitles
+    .filter(
+      (subtitle) =>
+        subtitle.endTimeSec > sceneStart && subtitle.startTimeSec < sceneEnd
+    )
+    .map((subtitle) => ({
+      ...subtitle,
+      startTimeSec: Math.max(0, subtitle.startTimeSec - sceneStart),
+      endTimeSec: Math.min(duration, subtitle.endTimeSec - sceneStart),
+    }))
+  const normalizedAudioClips = audioClips
+    .filter(
+      (clip) =>
+        clip.startTimeSec + clip.durationSec > sceneStart &&
+        clip.startTimeSec < sceneEnd
+    )
+    .map((clip) => {
+      const overlapStart = Math.max(sceneStart, clip.startTimeSec)
+      const overlapEnd = Math.min(
+        sceneEnd,
+        clip.startTimeSec + clip.durationSec
+      )
+      return {
+        ...clip,
+        startTimeSec: overlapStart - sceneStart,
+        durationSec: overlapEnd - overlapStart,
+        sourceStartSec:
+          (clip.sourceStartSec || 0) + overlapStart - clip.startTimeSec,
+        sourceDurationSec: overlapEnd - overlapStart,
+      }
+    })
+
+  return {
+    scenes: [normalizedScene],
+    subtitles: normalizedSubtitles,
+    audioClips: normalizedAudioClips,
+  }
 }

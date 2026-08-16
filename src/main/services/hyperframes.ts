@@ -8,7 +8,7 @@ function safeIdentifier(value: string, label: string) {
   return value
 }
 
-function portableCompositionHtml(html: string) {
+export function portableCompositionHtml(html: string) {
   return html.replace(
     /rhymx-media:\/\/local\/([^"'\s)<]+)/g,
     (_match, encoded: string) => {
@@ -21,7 +21,7 @@ function portableCompositionHtml(html: string) {
   )
 }
 
-async function resolveHyperframesBin(appPath: string) {
+export async function resolveHyperframesBin(appPath: string) {
   const candidates = [
     path.join(appPath, 'node_modules', 'hyperframes', 'bin', 'hyperframes.mjs'),
     path.join(
@@ -45,7 +45,8 @@ async function resolveHyperframesBin(appPath: string) {
 
 export async function renderHyperframesScene(options: {
   appPath: string
-  projectsDirectory: string
+  workingDirectory: string
+  studioProjectDirectory?: string
   projectId: string
   sceneId: string
   html: string
@@ -59,8 +60,8 @@ export async function renderHyperframesScene(options: {
   if (options.html.length > 1_000_000) throw new Error('Composition HTML is too large.')
 
   const sceneDirectory = path.join(
-    options.projectsDirectory,
-    '.assets',
+    options.workingDirectory,
+    'clips',
     projectId,
     'hyperframes',
     sceneId
@@ -68,6 +69,25 @@ export async function renderHyperframesScene(options: {
   await fs.mkdir(sceneDirectory, { recursive: true })
   const inputPath = path.join(sceneDirectory, 'index.html')
   const outputPath = path.join(sceneDirectory, 'scene.mp4')
+  if (options.html.includes('data-composition-src')) {
+    if (!options.studioProjectDirectory) {
+      throw new Error('The Studio project directory is required to render nested Comps.')
+    }
+    try {
+      await fs.access(path.join(options.studioProjectDirectory, 'index.html'))
+    } catch {
+      throw new Error(
+        'The Studio project files for this animation are missing. Open the project in Studio before exporting.'
+      )
+    }
+    // A master composition references child HTML files (and potentially assets)
+    // relative to its Studio project. Stage the whole project so the CLI sees
+    // the same file graph that Studio previews.
+    await fs.cp(options.studioProjectDirectory, sceneDirectory, {
+      recursive: true,
+      force: true,
+    })
+  }
   await fs.writeFile(inputPath, portableCompositionHtml(options.html), 'utf8')
 
   const cliPath = await resolveHyperframesBin(options.appPath)

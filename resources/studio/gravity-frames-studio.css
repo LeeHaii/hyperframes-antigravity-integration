@@ -1,0 +1,89 @@
+[data-gravity-frames-logo] {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+[data-gravity-frames-original-logo] {
+  display: none !important;
+}
+
+/* Studio expands the currently mounted precomp's source rows into the master
+   timeline. Keep the master AE-like: one row per precomp. Opening a Comp removes
+   this scope flag and reveals all of that child's editable layers. */
+html[data-gravity-master-composition-view]
+  [role='treegrid']
+  [role='row']:has(button[data-clip][data-el-id^='compositions/']) {
+  display: none !important;
+}
+
+html[data-gravity-master-composition-view]
+  [role='treegrid']
+  [role='rowgroup']:has(
+    > [role='row'] button[data-clip][data-el-id^='compositions/']
+  ) {
+  display: none !important;
+}
+
+#gravity-frames-agent-status {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1200;
+  display: flex;
+  max-width: 420px;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid rgb(38 38 38);
+  border-radius: 10px;
+  background: rgb(10 10 10 / 0.96);
+  padding: 11px 14px;
+  color: rgb(212 212 212);
+  font: 500 11px/1.45 ui-sans-serif, system-ui, sans-serif;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(12px);
+}
+
+#gravity-frames-agent-status [data-gravity-agent-indicator] {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #3ce6ac;
+}
+
+#gravity-frames-agent-status[data-state='running']
+  [data-gravity-agent-indicator] {
+  animation: gravity-agent-pulse 1.1s ease-in-out infinite;
+}
+
+#gravity-frames-agent-status[data-state='completed']
+  [data-gravity-agent-indicator] {
+  background: #3ce6ac;
+}
+
+#gravity-frames-agent-status[data-state='error']
+  [data-gravity-agent-indicator] {
+  background: #f87171;
+}
+
+[data-gravity-agent-running] button[data-gravity-agent-mode] {
+  cursor: wait !important;
+  opacity: 0.55;
+}
+
+@keyframes gravity-agent-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

@@ -204,7 +204,9 @@ export default function Header() {
           </div>
         </div>
       )}
-      {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+      {showExport && (
+        <ExportDialog scope="timeline" onClose={() => setShowExport(false)} />
+      )}
     </div>
   )
 }

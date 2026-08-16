@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   CircleAlert,
   ExternalLink,
+  ImagePlus,
   LoaderCircle,
   LogIn,
   Send,
@@ -11,10 +12,17 @@ import {
   Square,
   UserRound,
   WandSparkles,
+  X,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../../store/useEditorStore'
-import { AgentChatMessage, AntigravityStatus, SceneSegment } from '../../types/editor'
+import {
+  AgentChatMessage,
+  AntigravityStatus,
+  ChatReferenceImage,
+  HyperframesStudioAppendResult,
+  SceneSegment,
+} from '../../types/editor'
 import { localMediaUrl } from '../services/localMedia'
 
 const starterPrompts = [
@@ -31,15 +39,16 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;')
 }
 
-function seedComposition(scene: SceneSegment) {
-  const compositionId = `scene-${scene.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+export function seedComposition(scene: SceneSegment, requestedCompositionId?: string) {
+  const compositionId =
+    requestedCompositionId || `scene-${scene.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const duration = Math.max(0.1, scene.durationSec)
   const mediaUrl = scene.media?.sourceUrl ? localMediaUrl(scene.media.sourceUrl) : ''
   const isVideo = scene.media?.type === 'local_video' || scene.media?.type === 'youtube_clip' || scene.media?.type === 'pexels_video'
   const media = mediaUrl
     ? isVideo
-      ? `<video class="clip media" data-start="0" data-duration="${duration}" data-track-index="0" src="${escapeHtml(mediaUrl)}" muted playsinline></video>`
-      : `<img class="clip media" data-start="0" data-duration="${duration}" data-track-index="0" src="${escapeHtml(mediaUrl)}" alt="${escapeHtml(scene.media?.title || 'Scene media')}" />`
+      ? `<video id="${compositionId}-media" data-hf-id="hf-media" class="clip media" data-start="0" data-duration="${duration}" data-track-index="0" src="${escapeHtml(mediaUrl)}" muted playsinline></video>`
+      : `<img id="${compositionId}-media" data-hf-id="hf-media" class="clip media" data-start="0" data-duration="${duration}" data-track-index="0" src="${escapeHtml(mediaUrl)}" alt="${escapeHtml(scene.media?.title || 'Scene media')}" />`
     : ''
 
   return `<!doctype html>
@@ -59,10 +68,10 @@ function seedComposition(scene: SceneSegment) {
   </style>
 </head>
 <body>
-  <div id="${compositionId}" data-composition-id="${compositionId}" data-start="0" data-duration="${duration}" data-width="1920" data-height="1080">
+  <div id="${compositionId}" data-hf-id="hf-${compositionId}-root" data-composition-id="${compositionId}" data-start="0" data-duration="${duration}" data-width="1920" data-height="1080">
     ${media}
-    <div class="clip shade" data-start="0" data-duration="${duration}" data-track-index="1"></div>
-    <div class="clip copy" data-start="0" data-duration="${duration}" data-track-index="2">
+    <div id="${compositionId}-shade" data-hf-id="hf-shade" class="clip shade" data-start="0" data-duration="${duration}" data-track-index="1"></div>
+    <div id="${compositionId}-copy" data-hf-id="hf-copy" class="clip copy" data-start="0" data-duration="${duration}" data-track-index="2">
       <div class="eyebrow">HyperFrames scene</div>
       <h1>${escapeHtml(scene.transcriptText || 'Make motion feel inevitable.')}</h1>
     </div>
@@ -91,46 +100,83 @@ function assistantSummary(response: string, changed: boolean) {
   const withoutCode = response.replace(/```html[\s\S]*?```/gi, '').trim()
   if (withoutCode) return withoutCode.slice(0, 2_000)
   return changed
-    ? 'Updated the selected scene with a new seekable HyperFrames composition.'
+    ? 'Updated the animation with a new seekable HyperFrames composition.'
     : response.slice(0, 2_000)
 }
 
-function buildAgentPrompt(scene: SceneSegment, request: string, history: AgentChatMessage[]) {
-  const existingHtml = scene.hyperframes?.html || seedComposition(scene)
+function buildAgentPrompt(
+  scene: SceneSegment,
+  request: string,
+  history: AgentChatMessage[],
+  referenceImages: ChatReferenceImage[],
+  compositionId: string
+) {
+  const clipDurationSec =
+    scene.hyperframes?.clipDurationSec || Math.max(0.1, scene.durationSec)
+  const newCompositionSeed = seedComposition(
+    {
+      ...scene,
+      durationSec: clipDurationSec,
+      endTimeSec: scene.startTimeSec + clipDurationSec,
+      hyperframes: undefined,
+    },
+    compositionId
+  )
   const compactHistory = history
     .filter((message) => message.sceneId === scene.id)
     .slice(-6)
     .map((message) => `${message.role.toUpperCase()}: ${message.text}`)
     .join('\n')
+  const visualReferences = referenceImages.length
+    ? referenceImages
+        .map((image) => `- ${image.relativePath} (${image.name})`)
+        .join('\n')
+    : '(none)'
 
-  return `You are the motion-design agent inside Gravity Frames Studio. Create or revise ONE HyperFrames HTML composition.
+  return `You are the motion-design agent inside Gravity Frames Studio. Create ONE NEW HyperFrames child composition. It will be saved as a separate file and appended to a master timeline.
 
 Hard requirements:
 - Return a complete standalone HTML document inside one \`\`\`html code fence.
-- Keep a single composition root with data-composition-id, data-start="0", data-duration="${scene.durationSec}", data-width="1920", and data-height="1080".
-- Every timed visual uses class="clip", data-start, data-duration, and data-track-index.
+- Keep a single composition root with id="${compositionId}", data-composition-id="${compositionId}", data-start="0", data-duration="${clipDurationSec}", data-width="1920", and data-height="1080".
+- The child root MUST NOT have data-track-index and its data-start must remain exactly zero. Child time is local; the master host controls where the whole child starts.
+- Every timed visual uses class="clip", data-start, data-duration, and an integer data-track-index. Every timed visual must also have its own unique, stable id and data-hf-id so Studio can edit it reliably.
+- Do not create a master timeline and do not use data-composition-src. Return only the new self-contained child animation.
 - Animations must be deterministic and seekable. Prefer a paused GSAP timeline registered in window.__timelines[compositionId]. Do not use setTimeout, Date, random values, autoplay loops, or wall-clock-only CSS animation.
-- Keep the exact scene duration ${scene.durationSec} seconds. The HTML must work directly in @hyperframes/player and with the HyperFrames CLI.
+- Keep the exact child duration ${clipDurationSec} seconds. The HTML must work directly in @hyperframes/player and with the HyperFrames CLI.
 - Preserve any existing local media URL exactly unless the user asks to remove it.
-- Do not access the filesystem, shell, network APIs, cookies, localStorage, parent window, or Electron APIs. CDN script tags for animation libraries are allowed.
+- Do not access the filesystem except to inspect the read-only visual reference files listed below. Do not use shell, network APIs, cookies, localStorage, parent window, or Electron APIs. CDN script tags for animation libraries are allowed.
 - Before the HTML fence, give a concise one-sentence summary. Do not output a diff.
 
 Selected scene:
 - id: ${scene.id}
-- timeline range: ${scene.startTimeSec}s to ${scene.endTimeSec}s
+- animation duration: ${clipDurationSec}s
 - media: ${scene.media?.title || 'none (blank scene)'}
 - user request: ${request}
+
+Visual references (inspect these files before designing):
+${visualReferences}
 
 Recent scene conversation:
 ${compactHistory || '(none)'}
 
-Current composition:
+Fresh child-composition starting point:
 \`\`\`html
-${existingHtml}
+${newCompositionSeed}
 \`\`\``
 }
 
-export default function AntigravityChat({ compact = false }: { compact?: boolean }) {
+type AntigravityChatProps = {
+  compact?: boolean
+  onCompositionGenerated?: (
+    html: string,
+    label: string
+  ) => Promise<HyperframesStudioAppendResult>
+}
+
+export default function AntigravityChat({
+  compact = false,
+  onCompositionGenerated,
+}: AntigravityChatProps) {
   const {
     projectId,
     scenes,
@@ -138,7 +184,6 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
     agentChat,
     antigravityConversationId,
     updateScene,
-    addMediaAssets,
     appendAgentChat,
     clearAgentChat,
     setAntigravityConversationId,
@@ -150,7 +195,6 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
       agentChat: state.agentChat,
       antigravityConversationId: state.antigravityConversationId,
       updateScene: state.updateScene,
-      addMediaAssets: state.addMediaAssets,
       appendAgentChat: state.appendAgentChat,
       clearAgentChat: state.clearAgentChat,
       setAntigravityConversationId: state.setAntigravityConversationId,
@@ -161,7 +205,9 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
   const [draft, setDraft] = useState('')
   const [runningRequestId, setRunningRequestId] = useState<string | null>(null)
   const [activity, setActivity] = useState('')
-  const [isRendering, setIsRendering] = useState(false)
+  const [referenceImages, setReferenceImages] = useState<ChatReferenceImage[]>([])
+  const [isAddingReference, setIsAddingReference] = useState(false)
+  const [referenceError, setReferenceError] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sceneMessages = useMemo(
@@ -183,13 +229,9 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
         .slice(-1)[0]
       if (readable) setActivity(event.stream === 'stderr' ? readable : 'Antigravity is composing…')
     })
-    const removeRenderListener = window.electronAPI.onHyperframesRenderProgress((event) => {
-      if (event.sceneId === activeSceneId) setActivity(event.chunk.trim().slice(-160))
-    })
     return () => {
       window.removeEventListener('focus', onWindowFocus)
       removeAgentListener()
-      removeRenderListener()
     }
   }, [runningRequestId, activeSceneId])
 
@@ -211,9 +253,68 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
     })
   }
 
+  const addReferences = (images: ChatReferenceImage[]) => {
+    setReferenceImages((current) => {
+      const known = new Set(current.map((image) => image.path))
+      return [
+        ...current,
+        ...images.filter((image) => !known.has(image.path)),
+      ].slice(0, 4)
+    })
+  }
+
+  const browseReferences = async () => {
+    if (!projectId || isAddingReference) return
+    setIsAddingReference(true)
+    setReferenceError('')
+    try {
+      addReferences(await window.electronAPI.openChatReferenceImages(projectId))
+    } catch (error) {
+      setReferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsAddingReference(false)
+    }
+  }
+
+  const pasteReferences = async (
+    event: React.ClipboardEvent<HTMLTextAreaElement>
+  ) => {
+    if (!projectId || isAddingReference) return
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+      .slice(0, Math.max(0, 4 - referenceImages.length))
+    if (files.length === 0) return
+    event.preventDefault()
+    setIsAddingReference(true)
+    setReferenceError('')
+    try {
+      const saved = await Promise.all(
+        files.map(async (file, index) =>
+          window.electronAPI.saveChatReferenceImage(projectId, {
+            name: file.name || `Pasted image ${index + 1}`,
+            mimeType: file.type,
+            data: await file.arrayBuffer(),
+          })
+        )
+      )
+      addReferences(saved)
+    } catch (error) {
+      setReferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsAddingReference(false)
+    }
+  }
+
   const submit = async (event?: FormEvent) => {
     event?.preventDefault()
-    const request = draft.trim()
+    const submittedReferences = [...referenceImages]
+    const request =
+      draft.trim() ||
+      (submittedReferences.length
+        ? 'Use the attached image as the visual reference for this scene.'
+        : '')
     if (!request || !activeScene || !projectId || runningRequestId) return
 
     const userMessage: AgentChatMessage = {
@@ -222,9 +323,13 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
       text: request,
       createdAt: new Date().toISOString(),
       sceneId: activeScene.id,
+      referenceImages: submittedReferences.length
+        ? submittedReferences
+        : undefined,
     }
     appendAgentChat(userMessage)
     setDraft('')
+    setReferenceImages([])
     setActivity('Starting Antigravity…')
     if (!activeScene.hyperframes?.html) {
       updateScene(activeScene.id, {
@@ -232,11 +337,11 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
         hyperframes: {
           html: seedComposition(activeScene),
           updatedAt: new Date().toISOString(),
-          lastPrompt: request,
         },
       })
     }
     const requestId = crypto.randomUUID()
+    const compositionId = `gravity-chat-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
     setRunningRequestId(requestId)
 
     try {
@@ -244,17 +349,41 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
         requestId,
         projectId,
         conversationId: antigravityConversationId || undefined,
-        prompt: buildAgentPrompt(activeScene, request, [...agentChat, userMessage]),
+        prompt: buildAgentPrompt(
+          activeScene,
+          request,
+          [...agentChat, userMessage],
+          submittedReferences,
+          compositionId
+        ),
       })
       const html = extractHtml(result.text)
       if (html) {
+        setActivity('Adding a new Comp to the master timeline…')
+        const appended = await onCompositionGenerated?.(html, request)
+        const nextHtml = appended?.masterHtml || html
+        const clipDurationSec =
+          appended?.clipDurationSec ||
+          activeScene.hyperframes?.clipDurationSec ||
+          activeScene.durationSec
+        const totalDurationSec = appended?.totalDurationSec
         updateScene(activeScene.id, {
           sceneType: 'hyperframes',
+          ...(totalDurationSec
+            ? {
+                durationSec: totalDurationSec,
+                endTimeSec: activeScene.startTimeSec + totalDurationSec,
+              }
+            : {}),
           hyperframes: {
-            html,
+            ...activeScene.hyperframes,
+            html: nextHtml,
             updatedAt: new Date().toISOString(),
             lastPrompt: request,
             renderedPath: undefined,
+            clipDurationSec,
+            compositionCount: appended?.compositionCount,
+            lastCompositionPath: appended?.compositionPath,
           },
         })
       }
@@ -262,7 +391,11 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
       appendAgentChat({
         id: crypto.randomUUID(),
         role: 'assistant',
-        text: assistantSummary(result.text, Boolean(html)),
+        text: `${assistantSummary(result.text, Boolean(html))}${
+          html && onCompositionGenerated
+            ? '\n\nAdded as a new Comp at the end of the master timeline.'
+            : ''
+        }`,
         createdAt: new Date().toISOString(),
         sceneId: activeScene.id,
       })
@@ -285,71 +418,17 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
     if (runningRequestId) await window.electronAPI.cancelAntigravity(runningRequestId)
   }
 
-  const renderScene = async () => {
-    if (!projectId || !activeScene?.hyperframes?.html || isRendering) return
-    setIsRendering(true)
-    setActivity('Preparing HyperFrames render…')
-    try {
-      const outputPath = await window.electronAPI.renderHyperframesScene({
-        projectId,
-        sceneId: activeScene.id,
-        html: activeScene.hyperframes.html,
-      })
-      const assetId = `hf-${activeScene.id}`
-      addMediaAssets([
-        {
-          id: assetId,
-          name: `HyperFrames · ${activeScene.transcriptText || 'Motion scene'}`,
-          path: outputPath,
-          kind: 'video',
-          durationSec: activeScene.durationSec,
-          origin: 'imported',
-        },
-      ])
-      updateScene(activeScene.id, {
-        media: {
-          id: assetId,
-          type: 'local_video',
-          sourceUrl: outputPath,
-          thumbnailUrl: outputPath,
-          title: 'Rendered HyperFrames scene',
-          sourceDurationSec: activeScene.durationSec,
-          sourceStartSec: 0,
-        },
-        hyperframes: { ...activeScene.hyperframes, renderedPath: outputPath },
-      })
-      appendAgentChat({
-        id: crypto.randomUUID(),
-        role: 'system',
-        text: 'Rendered this HyperFrames scene to MP4 and attached it to the timeline clip.',
-        createdAt: new Date().toISOString(),
-        sceneId: activeScene.id,
-      })
-    } catch (error) {
-      appendAgentChat({
-        id: crypto.randomUUID(),
-        role: 'system',
-        text: error instanceof Error ? error.message : String(error),
-        createdAt: new Date().toISOString(),
-        sceneId: activeScene.id,
-      })
-    } finally {
-      setIsRendering(false)
-      setActivity('')
-    }
-  }
-
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[#0d1119]">
-      <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-3 py-3">
+    <section className="flex h-full min-h-0 flex-col bg-neutral-950">
+      <div className="flex shrink-0 items-center justify-between border-b border-neutral-800 px-4 py-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-100">
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-[#79f2c0] to-[#56a8ff] text-[#071018]">
+          <div className="flex items-center gap-2 text-xs font-semibold text-neutral-100">
+            <div className="flex h-6 w-6 items-center justify-center rounded-md border border-[#3ce6ac]/20 bg-[#3ce6ac]/10 text-[#3ce6ac]">
               <Sparkles className="h-3.5 w-3.5" />
             </div>
             Antigravity
           </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[9px] text-slate-500">
+          <div className="mt-1 flex items-center gap-1.5 text-[9px] text-neutral-500">
             {status?.installed && status.minimumVersionMet ? (
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
             ) : (
@@ -358,10 +437,10 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
             {status?.installed ? status.version || 'CLI installed' : 'CLI required'} · system keyring OAuth
           </div>
           <div
-            className="mt-1 flex max-w-[230px] items-center gap-1.5 truncate text-[9px] text-slate-400"
+            className="mt-1 flex max-w-[230px] items-center gap-1.5 truncate text-[9px] text-neutral-400"
             title={status?.accountEmail || status?.message}
           >
-            <UserRound className="h-3 w-3 shrink-0 text-[#79f2c0]" />
+            <UserRound className="h-3 w-3 shrink-0 text-[#3ce6ac]" />
             {status?.accountEmail ? (
               <span className="truncate">
                 Account · {status.accountEmail}{status.accountPlan ? ` · ${status.accountPlan}` : ''}
@@ -374,19 +453,9 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {activeScene?.hyperframes?.html && (
-            <button
-              onClick={renderScene}
-              disabled={isRendering}
-              className="rounded-lg border border-emerald-300/15 bg-emerald-300/10 px-2 py-1.5 text-[9px] font-medium text-emerald-200 hover:bg-emerald-300/15 disabled:opacity-50"
-              title="Render with HyperFrames CLI and attach the MP4"
-            >
-              {isRendering ? 'Rendering…' : 'Render MP4'}
-            </button>
-          )}
           <button
             onClick={connect}
-            className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[9px] text-slate-300 hover:bg-white/10"
+            className="flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-[9px] text-neutral-300 hover:border-neutral-600 hover:bg-neutral-800"
           >
             {status?.installed ? <LogIn className="h-3 w-3" /> : <ExternalLink className="h-3 w-3" />}
             {status?.installed ? 'Connect' : 'Install'}
@@ -396,17 +465,17 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
 
       <div ref={scrollRef} className="custom-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
         {sceneMessages.length === 0 && (
-          <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-3">
-            <Bot className="mb-2 h-5 w-5 text-[#79f2c0]" />
-            <p className="text-[11px] leading-relaxed text-slate-300">
-              Describe the motion you want. Antigravity will return seekable HyperFrames HTML for the selected scene.
+          <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3">
+            <Bot className="mb-2 h-5 w-5 text-[#3ce6ac]" />
+            <p className="text-[11px] leading-relaxed text-neutral-300">
+              Describe the motion you want. Antigravity will return a seekable HyperFrames animation you can refine in Studio.
             </p>
             <div className="mt-3 space-y-1.5">
               {starterPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   onClick={() => setDraft(prompt)}
-                  className="block w-full rounded-lg border border-white/[0.06] bg-black/15 px-2.5 py-2 text-left text-[10px] text-slate-500 hover:border-[#79f2c0]/20 hover:text-slate-200"
+                  className="block w-full rounded-md border border-neutral-800 bg-neutral-950/60 px-2.5 py-2 text-left text-[10px] text-neutral-500 hover:border-neutral-700 hover:bg-neutral-900 hover:text-neutral-200"
                 >
                   {prompt}
                 </button>
@@ -419,31 +488,74 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
             key={message.id}
             className={`max-w-[92%] rounded-xl px-3 py-2.5 text-[11px] leading-relaxed whitespace-pre-wrap ${
               message.role === 'user'
-                ? 'ml-auto bg-[#2276f5] text-white'
+                ? 'ml-auto bg-[#3ce6ac] text-neutral-950'
                 : message.role === 'system'
                   ? 'border border-amber-400/15 bg-amber-400/[0.06] text-amber-100/80'
-                  : 'border border-white/[0.07] bg-white/[0.04] text-slate-300'
+                  : 'border border-neutral-800 bg-neutral-900 text-neutral-300'
             }`}
           >
+            {message.referenceImages?.length ? (
+              <div className="mb-2 grid grid-cols-2 gap-1.5">
+                {message.referenceImages.map((image) => (
+                  <img
+                    key={image.id}
+                    src={localMediaUrl(image.path)}
+                    alt={image.name}
+                    title={image.name}
+                    className="aspect-video w-full rounded-md border border-neutral-800 object-cover"
+                  />
+                ))}
+              </div>
+            ) : null}
             {message.text}
           </div>
         ))}
-        {(runningRequestId || isRendering) && (
-          <div className="flex items-center gap-2 text-[10px] text-slate-500">
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin text-[#79f2c0]" />
+        {runningRequestId && (
+          <div className="flex items-center gap-2 text-[10px] text-neutral-500">
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin text-[#3ce6ac]" />
             <span className="truncate">{activity || 'Working…'}</span>
           </div>
         )}
       </div>
 
-      <form onSubmit={submit} className="shrink-0 border-t border-white/[0.07] p-3">
+      <form onSubmit={submit} className="shrink-0 border-t border-neutral-800 p-3">
         {!activeScene && (
-          <div className="mb-2 text-[10px] text-amber-300/70">Select or create a scene first.</div>
+          <div className="mb-2 text-[10px] text-amber-300/70">Open an animation project first.</div>
         )}
-        <div className="rounded-xl border border-white/10 bg-black/25 p-2 focus-within:border-[#79f2c0]/35">
+        {referenceError ? (
+          <div className="mb-2 text-[9px] text-red-300">{referenceError}</div>
+        ) : null}
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 p-2 focus-within:border-[#3ce6ac]/60 focus-within:ring-1 focus-within:ring-[#3ce6ac]/20">
+          {referenceImages.length ? (
+            <div className="mb-2 grid grid-cols-4 gap-1.5">
+              {referenceImages.map((image) => (
+                <div key={image.id} className="group relative">
+                  <img
+                    src={localMediaUrl(image.path)}
+                    alt={image.name}
+                    title={image.name}
+                    className="aspect-square w-full rounded-md border border-neutral-700 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReferenceImages((current) =>
+                        current.filter((item) => item.id !== image.id)
+                      )
+                    }
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/75 text-white opacity-0 transition group-hover:opacity-100"
+                    title="Remove reference"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={pasteReferences}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
@@ -453,15 +565,36 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
             disabled={!activeScene || Boolean(runningRequestId)}
             rows={compact ? 2 : 3}
             placeholder="Make the headline arrive like a camera flash…"
-            className="block w-full resize-none bg-transparent px-1 text-[11px] text-slate-200 outline-none placeholder:text-slate-700"
+            className="block w-full resize-none bg-transparent px-1 text-[11px] text-neutral-200 outline-none placeholder:text-neutral-600"
           />
           <div className="mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-1 text-[9px] text-slate-700">
-              <WandSparkles className="h-3 w-3" /> Uses your Antigravity quota
+            <div className="flex min-w-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={browseReferences}
+                disabled={
+                  !projectId ||
+                  isAddingReference ||
+                  referenceImages.length >= 4 ||
+                  Boolean(runningRequestId)
+                }
+                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[9px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-40"
+                title="Browse for reference images, or paste one with Ctrl+V"
+              >
+                {isAddingReference ? (
+                  <LoaderCircle className="h-3 w-3 animate-spin" />
+                ) : (
+                  <ImagePlus className="h-3 w-3" />
+                )}
+                Add image
+              </button>
+              <div className="hidden items-center gap-1 text-[9px] text-neutral-600 xl:flex">
+                <WandSparkles className="h-3 w-3" /> Paste with Ctrl+V
+              </div>
             </div>
             <div className="flex items-center gap-1">
               {agentChat.length > 0 && !runningRequestId && (
-                <button type="button" onClick={clearAgentChat} className="px-2 text-[9px] text-slate-600 hover:text-slate-300">
+                <button type="button" onClick={clearAgentChat} className="px-2 text-[9px] text-neutral-600 hover:text-neutral-300">
                   Clear
                 </button>
               )}
@@ -472,8 +605,12 @@ export default function AntigravityChat({ compact = false }: { compact?: boolean
               ) : (
                 <button
                   type="submit"
-                  disabled={!draft.trim() || !activeScene}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#79f2c0] text-[#071018] disabled:bg-slate-800 disabled:text-slate-600"
+                  disabled={
+                    (!draft.trim() && referenceImages.length === 0) ||
+                    !activeScene ||
+                    isAddingReference
+                  }
+                  className="flex h-7 w-7 items-center justify-center rounded-md bg-[#3ce6ac] text-neutral-950 hover:brightness-110 disabled:bg-neutral-800 disabled:text-neutral-600"
                 >
                   <Send className="h-3.5 w-3.5" />
                 </button>

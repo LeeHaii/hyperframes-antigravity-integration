@@ -32,6 +32,14 @@ import {
   runAntigravity,
 } from './services/antigravity'
 import { renderHyperframesScene } from './services/hyperframes'
+import {
+  appendHyperframesStudioComposition,
+  closeHyperframesStudio,
+  hyperframesStudioDirectory,
+  openHyperframesStudio,
+  readHyperframesStudioHtml,
+  writeHyperframesStudioHtml,
+} from './services/hyperframesStudio'
 import fs from 'fs/promises'
 import {
   AppSettings,
@@ -45,6 +53,7 @@ let mainWindow: BrowserWindow | null = null
 let batchExportCancelled = false
 let rendererServer: Server | null = null
 let rendererOriginPromise: Promise<string> | null = null
+let studioDownloadHandlerRegistered = false
 
 registerLocalMediaScheme()
 
@@ -70,7 +79,7 @@ async function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: file: rhymx-media: https:; media-src 'self' data: blob: file: rhymx-media: https:; connect-src 'self' https:; frame-src 'self' blob: data: file: rhymx-media: https://www.youtube.com https://www.youtube-nocookie.com;",
+          "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: file: rhymx-media: https:; media-src 'self' data: blob: file: rhymx-media: https:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-src 'self' blob: data: file: rhymx-media: http://localhost:* http://127.0.0.1:* https://www.youtube.com https://www.youtube-nocookie.com;",
         ]
       }
     })
@@ -157,6 +166,7 @@ function rendererContentType(filePath: string) {
 }
 
 app.whenReady().then(() => {
+  registerStudioRenderDownloads()
   registerLocalMediaProtocol().then(createWindow)
 
   app.on('activate', () => {
@@ -169,6 +179,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  closeHyperframesStudio()
   rendererServer?.close()
   rendererServer = null
   rendererOriginPromise = null
@@ -215,23 +226,181 @@ ipcMain.handle('antigravity-run', async (event, request) => {
   )
 })
 
+ipcMain.handle('antigravity-run-studio', async (event, request) => {
+  const projectId = String(request?.projectId || '')
+  const sceneId = String(request?.sceneId || '')
+  const workingDirectory = hyperframesStudioDirectory(
+    await getStudioProjectsDirectory(),
+    projectId,
+    sceneId
+  )
+  await fs.mkdir(workingDirectory, { recursive: true })
+  return await runAntigravity(
+    String(request?.requestId || ''),
+    String(request?.prompt || ''),
+    workingDirectory,
+    request?.conversationId ? String(request.conversationId) : undefined,
+    (stream, chunk) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('antigravity-stream', {
+          requestId: String(request?.requestId || ''),
+          stream,
+          chunk,
+        })
+      }
+    }
+  )
+})
+
+function registerStudioRenderDownloads() {
+  if (studioDownloadHandlerRegistered) return
+  studioDownloadHandlerRegistered = true
+  session.defaultSession.on('will-download', (_event, item) => {
+    const sourceUrl = item.getURL()
+    if (!/\/api\/projects\/[^/]+\/renders\/file\//.test(sourceUrl)) return
+    item.pause()
+    void (async () => {
+      const outputPath = await availableNamedOutputPath(
+        await getRenderDirectory(),
+        item.getFilename()
+      )
+      if (item.getState() === 'cancelled') return
+      item.setSavePath(outputPath)
+      item.resume()
+    })().catch((error) => {
+      console.error('Could not prepare the Studio render download:', error)
+      item.cancel()
+    })
+  })
+}
+
 ipcMain.handle('hyperframes-render-scene', async (event, request) => {
+  const projectId = String(request?.projectId || '')
+  const sceneId = String(request?.sceneId || '')
+  const studioProjectsDirectory = await getStudioProjectsDirectory()
   return await renderHyperframesScene({
     appPath: app.getAppPath(),
-    projectsDirectory: await getProjectsDirectory(),
-    projectId: String(request?.projectId || ''),
-    sceneId: String(request?.sceneId || ''),
+    workingDirectory: await getRenderWorkingDirectory(),
+    studioProjectDirectory: hyperframesStudioDirectory(
+      studioProjectsDirectory,
+      projectId,
+      sceneId
+    ),
+    projectId,
+    sceneId,
     html: String(request?.html || ''),
     onChunk: (chunk) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('hyperframes-render-progress', {
-          sceneId: String(request?.sceneId || ''),
+          sceneId,
           chunk,
         })
       }
     },
   })
 })
+
+ipcMain.handle('hyperframes-studio-open', async (_, request) => {
+  return await openHyperframesStudio({
+    appPath: app.getAppPath(),
+    studioProjectsDirectory: await getStudioProjectsDirectory(),
+    projectId: String(request?.projectId || ''),
+    sceneId: String(request?.sceneId || ''),
+    html: String(request?.html || ''),
+  })
+})
+
+ipcMain.handle('hyperframes-studio-read', async (_, request) => {
+  return await readHyperframesStudioHtml({
+    studioProjectsDirectory: await getStudioProjectsDirectory(),
+    projectId: String(request?.projectId || ''),
+    sceneId: String(request?.sceneId || ''),
+  })
+})
+
+ipcMain.handle('hyperframes-studio-write', async (_, request) => {
+  return await writeHyperframesStudioHtml({
+    studioProjectsDirectory: await getStudioProjectsDirectory(),
+    projectId: String(request?.projectId || ''),
+    sceneId: String(request?.sceneId || ''),
+    html: String(request?.html || ''),
+  })
+})
+
+ipcMain.handle('hyperframes-studio-append-composition', async (_, request) => {
+  return await appendHyperframesStudioComposition({
+    studioProjectsDirectory: await getStudioProjectsDirectory(),
+    projectId: String(request?.projectId || ''),
+    sceneId: String(request?.sceneId || ''),
+    html: String(request?.html || ''),
+    label: String(request?.label || 'Animation'),
+    preserveCurrent: Boolean(request?.preserveCurrent),
+  })
+})
+
+ipcMain.handle('hyperframes-studio-close', () => closeHyperframesStudio())
+
+ipcMain.handle('open-chat-reference-images', async (_, projectId: string) => {
+  if (!mainWindow) return []
+  const directory = await getProjectChatReferencesDirectory(String(projectId || ''))
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Add reference images',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+    ],
+  })
+  if (result.canceled) return []
+  await fs.mkdir(directory, { recursive: true })
+  return await Promise.all(
+    result.filePaths.slice(0, 4).map(async (sourcePath) => {
+      const extension = path.extname(sourcePath).toLowerCase()
+      if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extension)) {
+        throw new Error('Unsupported reference image format.')
+      }
+      const fileName = `${randomUUID()}${extension}`
+      const destination = path.join(directory, fileName)
+      await fs.copyFile(sourcePath, destination)
+      return {
+        id: randomUUID(),
+        name: path.basename(sourcePath),
+        path: destination,
+        relativePath: path.join('references', fileName),
+      }
+    })
+  )
+})
+
+ipcMain.handle(
+  'save-chat-reference-image',
+  async (_, projectId: string, image: any) => {
+    const mimeTypes: Record<string, string> = {
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/webp': '.webp',
+      'image/gif': '.gif',
+    }
+    const mimeType = String(image?.mimeType || '').toLowerCase()
+    const extension = mimeTypes[mimeType]
+    if (!extension) throw new Error('Unsupported clipboard image format.')
+    const bytes = Buffer.from(image?.data || [])
+    if (bytes.length === 0) throw new Error('The clipboard image is empty.')
+    if (bytes.length > 25 * 1024 * 1024) {
+      throw new Error('Reference images must be smaller than 25 MB.')
+    }
+    const directory = await getProjectChatReferencesDirectory(String(projectId || ''))
+    await fs.mkdir(directory, { recursive: true })
+    const fileName = `${randomUUID()}${extension}`
+    const destination = path.join(directory, fileName)
+    await fs.writeFile(destination, bytes)
+    return {
+      id: randomUUID(),
+      name: path.basename(String(image?.name || `Pasted image${extension}`)),
+      path: destination,
+      relativePath: path.join('references', fileName),
+    }
+  }
+)
 
 ipcMain.handle('open-audio-file', async () => {
   if (!mainWindow) return null
@@ -252,7 +421,7 @@ ipcMain.handle('get-media-duration', async (_, filePath: string) => {
 ipcMain.handle('transcribe-audio', async (_, filePath: string, apiKey: string) => {
   return await transcribeAudio(filePath, apiKey, (progress) => {
     mainWindow?.webContents.send('transcription-progress', progress)
-  })
+  }, path.join(await getRenderWorkingDirectory(), 'temp'))
 })
 
 ipcMain.handle(
@@ -301,12 +470,14 @@ ipcMain.handle('open-media-files', async () => {
 
 type PersistedPreferences = {
   projectsDirectory?: string
+  renderDirectory?: string
+  studioProjectsDirectory?: string
   autoStockEnabled?: boolean
 }
 
 let preferencesCache: PersistedPreferences | null = null
 const getDefaultProjectsDirectory = () => path.join(app.getPath('userData'), 'projects')
-const getAppCacheDirectory = () => path.join(app.getPath('userData'), 'cache')
+const getDefaultRenderDirectory = () => path.join(app.getPath('videos'), 'Gravity Frames')
 const getPreferencesPath = () => path.join(app.getPath('userData'), 'preferences.json')
 
 async function getPreferences(): Promise<PersistedPreferences> {
@@ -334,6 +505,40 @@ async function getProjectsDirectory() {
   return preferences.projectsDirectory || getDefaultProjectsDirectory()
 }
 
+async function getProjectAgentWorkspaceDirectory(projectId: string) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
+    throw new Error('Invalid project id.')
+  }
+  return path.join(
+    await getProjectsDirectory(),
+    '.assets',
+    projectId,
+    'agent-workspace'
+  )
+}
+
+async function getProjectChatReferencesDirectory(projectId: string) {
+  return path.join(await getProjectAgentWorkspaceDirectory(projectId), 'references')
+}
+
+async function getRenderDirectory() {
+  const preferences = await getPreferences()
+  return preferences.renderDirectory || getDefaultRenderDirectory()
+}
+
+async function getRenderWorkingDirectory() {
+  return path.join(await getRenderDirectory(), '.gravity-frames')
+}
+
+async function getDefaultStudioProjectsDirectory() {
+  return path.join(await getRenderWorkingDirectory(), 'studio')
+}
+
+async function getStudioProjectsDirectory() {
+  const preferences = await getPreferences()
+  return preferences.studioProjectsDirectory || (await getDefaultStudioProjectsDirectory())
+}
+
 async function getProjectPath(projectId: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
     throw new Error('Invalid project id.')
@@ -345,7 +550,7 @@ async function getProjectYouTubeDirectory(projectId: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
     throw new Error('Invalid project id.')
   }
-  return path.join(await getProjectsDirectory(), '.assets', projectId, 'youtube')
+  return path.join(await getRenderWorkingDirectory(), 'clips', projectId, 'youtube')
 }
 
 function cleanProjectName(name: string) {
@@ -414,11 +619,23 @@ async function directorySize(directory: string): Promise<number> {
 
 async function appSettings(): Promise<AppSettings> {
   const preferences = await getPreferences()
+  const renderDirectory = await getRenderDirectory()
+  const workingDirectory = await getRenderWorkingDirectory()
+  const defaultStudioProjectsDirectory = await getDefaultStudioProjectsDirectory()
+  const cacheSizeBytes =
+    (await directorySize(path.join(workingDirectory, 'cache'))) +
+    (await directorySize(path.join(workingDirectory, 'temp')))
   return {
     projectsDirectory: await getProjectsDirectory(),
     defaultProjectsDirectory: getDefaultProjectsDirectory(),
+    renderDirectory,
+    defaultRenderDirectory: getDefaultRenderDirectory(),
+    workingDirectory,
+    studioProjectsDirectory: await getStudioProjectsDirectory(),
+    defaultStudioProjectsDirectory,
     autoStockEnabled: preferences.autoStockEnabled ?? true,
-    cacheSizeBytes: await directorySize(getAppCacheDirectory()),
+    cacheSizeBytes,
+    workingFilesSizeBytes: await directorySize(workingDirectory),
   }
 }
 
@@ -700,6 +917,60 @@ ipcMain.handle('reset-projects-directory', async () => {
   return await appSettings()
 })
 
+ipcMain.handle('choose-render-directory', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose default render folder',
+    defaultPath: await getRenderDirectory(),
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  const directory = path.resolve(result.filePaths[0])
+  await fs.mkdir(directory, { recursive: true })
+  const testPath = path.join(directory, `.gravity-frames-write-test-${Date.now()}`)
+  await fs.writeFile(testPath, 'ok', 'utf8')
+  await fs.unlink(testPath)
+  await savePreferences({ renderDirectory: directory })
+  return await appSettings()
+})
+
+ipcMain.handle('choose-studio-projects-directory', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose HyperFrames Studio projects folder',
+    defaultPath: await getStudioProjectsDirectory(),
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  const directory = path.resolve(result.filePaths[0])
+  await fs.mkdir(directory, { recursive: true })
+  const testPath = path.join(directory, `.gravity-frames-write-test-${Date.now()}`)
+  await fs.writeFile(testPath, 'ok', 'utf8')
+  await fs.unlink(testPath)
+  await savePreferences({ studioProjectsDirectory: directory })
+  return await appSettings()
+})
+
+ipcMain.handle('reset-studio-projects-directory', async () => {
+  await savePreferences({ studioProjectsDirectory: undefined })
+  await fs.mkdir(await getDefaultStudioProjectsDirectory(), { recursive: true })
+  return await appSettings()
+})
+
+ipcMain.handle('open-studio-projects-directory', async () => {
+  const directory = await getStudioProjectsDirectory()
+  await fs.mkdir(directory, { recursive: true })
+  const error = await shell.openPath(directory)
+  if (error) throw new Error(error)
+  return true
+})
+
+ipcMain.handle('reset-render-directory', async () => {
+  await savePreferences({ renderDirectory: undefined })
+  await fs.mkdir(getDefaultRenderDirectory(), { recursive: true })
+  return await appSettings()
+})
+
 ipcMain.handle('set-auto-stock-enabled', async (_, enabled: boolean) => {
   await savePreferences({ autoStockEnabled: Boolean(enabled) })
   return await appSettings()
@@ -707,14 +978,13 @@ ipcMain.handle('set-auto-stock-enabled', async (_, enabled: boolean) => {
 
 ipcMain.handle('clear-cache', async () => {
   await session.defaultSession.clearCache()
-  const cacheDirectory = path.resolve(getAppCacheDirectory())
-  const userDataDirectory = path.resolve(app.getPath('userData'))
-  if (
-    cacheDirectory !== userDataDirectory &&
-    cacheDirectory.startsWith(`${userDataDirectory}${path.sep}`)
-  ) {
-    await fs.rm(cacheDirectory, { recursive: true, force: true })
-    await fs.mkdir(cacheDirectory, { recursive: true })
+  const workingDirectory = path.resolve(await getRenderWorkingDirectory())
+  for (const name of ['cache', 'temp']) {
+    const directory = path.resolve(workingDirectory, name)
+    if (directory.startsWith(`${workingDirectory}${path.sep}`)) {
+      await fs.rm(directory, { recursive: true, force: true })
+      await fs.mkdir(directory, { recursive: true })
+    }
   }
   return await appSettings()
 })
@@ -752,10 +1022,18 @@ ipcMain.handle('choose-export-path', async (_, defaultName: string) => {
   const safeName = `${path.basename(defaultName || 'AI Video', path.extname(defaultName || ''))}.mp4`
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export video',
-    defaultPath: path.join(app.getPath('videos'), safeName),
+    defaultPath: path.join(await getRenderDirectory(), safeName),
     filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
   })
   return result.canceled ? null : result.filePath || null
+})
+
+ipcMain.handle('get-default-export-path', async (_, defaultName: string) => {
+  const baseName = path.basename(
+    defaultName || 'AI Video',
+    path.extname(defaultName || '')
+  )
+  return await availableOutputPath(await getRenderDirectory(), baseName)
 })
 
 ipcMain.handle('get-encoder-capabilities', () => getEncoderCapabilities())
@@ -773,7 +1051,7 @@ ipcMain.handle('choose-batch-export-directory', async () => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose batch export folder',
-    defaultPath: app.getPath('videos'),
+    defaultPath: await getRenderDirectory(),
     properties: ['openDirectory', 'createDirectory'],
   })
   return result.canceled ? null : result.filePaths[0] || null
@@ -791,6 +1069,30 @@ async function availableOutputPath(directory: string, projectName: string) {
     try {
       await fs.access(candidate)
       suffix += 1
+    } catch {
+      return candidate
+    }
+  }
+}
+
+async function availableNamedOutputPath(directory: string, requestedName: string) {
+  const requestedExtension = path.extname(requestedName).toLowerCase()
+  const extension = ['.mp4', '.webm', '.mov'].includes(requestedExtension)
+    ? requestedExtension
+    : '.mp4'
+  const baseName =
+    path
+      .basename(requestedName, requestedExtension)
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .trim() || 'HyperFrames render'
+  await fs.mkdir(directory, { recursive: true })
+  for (let suffix = 0; ; suffix += 1) {
+    const candidate = path.join(
+      directory,
+      `${baseName}${suffix === 0 ? '' : ` (${suffix + 1})`}${extension}`
+    )
+    try {
+      await fs.access(candidate)
     } catch {
       return candidate
     }
