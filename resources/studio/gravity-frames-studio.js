@@ -27,6 +27,11 @@
   let sidebarActiveTabClass = ''
   let sidebarInactiveTabClass = ''
   let pendingChildSeek = null
+  let masterTimelineClips = []
+  let masterTimelineDuration = 0
+  let masterTimelineProjectId = ''
+  let masterTimelineLoad = null
+  let masterTimelineLoadedAt = 0
 
   const studioRoute = () => {
     const separator = location.hash.indexOf('?')
@@ -34,6 +39,198 @@
     const query = separator >= 0 ? location.hash.slice(separator + 1) : ''
     return { route, params: new URLSearchParams(query) }
   }
+
+  const activeStudioProjectId = () => {
+    const route = studioRoute().route
+    const prefix = '#project/'
+    if (!route.startsWith(prefix)) return ''
+    try {
+      return decodeURIComponent(route.slice(prefix.length))
+    } catch {
+      return route.slice(prefix.length)
+    }
+  }
+
+  const finiteNumber = (value, fallback = 0) => {
+    const parsed = Number.parseFloat(value || '')
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+
+  const readMasterTimeline = (html) => {
+    const documentCopy = new DOMParser().parseFromString(html, 'text/html')
+    const root = documentCopy.querySelector(
+      '[data-gravity-frames-master="1"][data-composition-id]'
+    )
+    if (!root) return { clips: [], duration: 0 }
+    const clips = [...root.querySelectorAll('[data-composition-src]')]
+      .map((host, index) => {
+        const compositionId = host.getAttribute('data-composition-id')
+        const compositionSrc = host.getAttribute('data-composition-src')
+        const duration = finiteNumber(host.getAttribute('data-duration'))
+        if (!compositionId || !compositionSrc || duration <= 0) return null
+        const id = host.id || `${compositionId}-host-${index + 1}`
+        const timelineLabel =
+          host.getAttribute('data-timeline-label') ||
+          host.getAttribute('data-label') ||
+          compositionId
+        return {
+          id,
+          label: timelineLabel,
+          start: Math.max(0, finiteNumber(host.getAttribute('data-start'))),
+          duration,
+          track: Math.max(
+            0,
+            finiteNumber(host.getAttribute('data-track-index'), index)
+          ),
+          zIndex: finiteNumber(host.style.zIndex),
+          stackingContextId: null,
+          kind: 'composition',
+          tagName: host.tagName.toLowerCase(),
+          compositionId,
+          compositionAncestors: [],
+          parentCompositionId: null,
+          nodePath: null,
+          compositionSrc,
+          playbackStart: Math.max(
+            0,
+            finiteNumber(host.getAttribute('data-playback-start'))
+          ),
+          playbackRate: Math.max(
+            0.1,
+            finiteNumber(host.getAttribute('data-playback-rate'), 1)
+          ),
+          assetUrl: null,
+          timelineRole: host.getAttribute('data-timeline-role'),
+          timelineLabel,
+          timelineGroup: host.getAttribute('data-timeline-group'),
+          timelinePriority: null,
+        }
+      })
+      .filter(Boolean)
+    return {
+      clips,
+      duration: Math.max(
+        finiteNumber(root.getAttribute('data-duration')),
+        ...clips.map((clip) => clip.start + clip.duration)
+      ),
+    }
+  }
+
+  const loadEmbeddedMasterTimeline = () => {
+    const encoded = document
+      .querySelector('meta[name="gravity-frames-master-timeline"]')
+      ?.getAttribute('content')
+    if (!encoded) return
+    try {
+      const bytes = Uint8Array.from(atob(encoded), (character) =>
+        character.charCodeAt(0)
+      )
+      const parsed = JSON.parse(new TextDecoder().decode(bytes))
+      if (!Array.isArray(parsed.clips)) return
+      masterTimelineClips = parsed.clips
+      masterTimelineDuration = finiteNumber(parsed.duration)
+      masterTimelineProjectId = activeStudioProjectId()
+      masterTimelineLoadedAt = Date.now()
+    } catch {
+      // The normal project-file request below remains available as a fallback.
+    }
+  }
+
+  loadEmbeddedMasterTimeline()
+
+  const updateEmbeddedMasterTimeline = () => {
+    const meta = document.querySelector('meta[name="gravity-frames-master-timeline"]')
+    if (!meta) return
+    try {
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({ clips: masterTimelineClips, duration: masterTimelineDuration })
+      )
+      let binary = ''
+      for (const byte of bytes) binary += String.fromCharCode(byte)
+      meta.setAttribute('content', btoa(binary))
+    } catch {
+      // Keep the last valid embedded manifest if encoding fails.
+    }
+  }
+
+  const refreshMasterTimeline = async (force = false) => {
+    if (studioRoute().params.has('comp')) return masterTimelineClips
+    const projectId = activeStudioProjectId()
+    if (!projectId) return []
+    const now = Date.now()
+    if (
+      !force &&
+      projectId === masterTimelineProjectId &&
+      masterTimelineClips.length > 0 &&
+      now - masterTimelineLoadedAt < 1000
+    ) {
+      return masterTimelineClips
+    }
+    if (masterTimelineLoad) return await masterTimelineLoad
+    masterTimelineLoad = fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(
+        'index.html'
+      )}`,
+      { cache: 'no-store' }
+    )
+      .then((response) => {
+        if (!response.ok) throw new Error(`Could not read index.html (${response.status}).`)
+        return response.json()
+      })
+      .then((payload) => {
+        const parsed = readMasterTimeline(String(payload.content || ''))
+        masterTimelineProjectId = projectId
+        masterTimelineClips = parsed.clips
+        masterTimelineDuration = parsed.duration
+        masterTimelineLoadedAt = Date.now()
+        updateEmbeddedMasterTimeline()
+        return masterTimelineClips
+      })
+      .catch(() => masterTimelineClips)
+      .finally(() => {
+        masterTimelineLoad = null
+      })
+    return await masterTimelineLoad
+  }
+
+  const mergeMasterTimelineManifest = (data) => {
+    if (studioRoute().params.has('comp')) return
+    if (
+      !Array.isArray(data?.clips) ||
+      masterTimelineClips.length === 0
+    ) {
+      return data
+    }
+    const receivedById = new Map(data.clips.map((clip) => [clip?.id, clip]))
+    data.clips = masterTimelineClips.map((authored) => ({
+      ...(receivedById.get(authored.id) || {}),
+      ...authored,
+    }))
+    const fpsNumerator = finiteNumber(data.fps?.numerator)
+    const fpsDenominator = finiteNumber(data.fps?.denominator, 1)
+    const fps =
+      fpsNumerator > 0 && fpsDenominator > 0
+        ? fpsNumerator / fpsDenominator
+        : data.durationSeconds > 0
+          ? data.durationInFrames / data.durationSeconds
+          : 30
+    if (Number.isFinite(data.durationSeconds)) {
+      data.durationSeconds = Math.max(data.durationSeconds, masterTimelineDuration)
+    }
+    if (Number.isFinite(data.durationInFrames) && fps > 0) {
+      data.durationInFrames = Math.max(
+        data.durationInFrames,
+        Math.round(masterTimelineDuration * fps)
+      )
+    }
+    return data
+  }
+
+  const mergeMasterTimelineMessage = (event) => {
+    mergeMasterTimelineManifest(event.data)
+  }
+
+  window.addEventListener('message', mergeMasterTimelineMessage, true)
 
   const buttonByLabel = (label) =>
     [...document.querySelectorAll('button[role="tab"]')].find(
@@ -556,6 +753,9 @@
       'data-gravity-master-composition-view',
       !isChildComposition
     )
+    if (!isChildComposition) {
+      void refreshMasterTimeline()
+    }
   }
 
   const applyPendingChildSeek = (attempt = 0) => {

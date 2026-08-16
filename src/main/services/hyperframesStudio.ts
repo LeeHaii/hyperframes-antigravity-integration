@@ -77,14 +77,19 @@ export function hyperframesStudioDirectory(
   )
 }
 
-function injectGravityFramesStudio(html: string) {
+function injectGravityFramesStudio(html: string, masterHtml: string) {
+  const timelineBootstrap = Buffer.from(
+    JSON.stringify(masterTimelineBootstrap(masterHtml)),
+    'utf8'
+  ).toString('base64')
   const customization = [
+    `<meta name="gravity-frames-master-timeline" content="${timelineBootstrap}">`,
     '<link rel="stylesheet" href="/gravity-frames-studio.css">',
     '<link rel="icon" type="image/jpeg" href="/gravity-frames-logo.jpg">',
-    '<script defer src="/gravity-frames-studio.js"></script>',
+    '<script src="/gravity-frames-studio.js?v=timeline-master-v2"></script>',
   ].join('')
-  return html.includes('</head>')
-    ? html.replace('</head>', `${customization}</head>`)
+  return /<head\b[^>]*>/i.test(html)
+    ? html.replace(/<head\b[^>]*>/i, (head) => `${head}${customization}`)
     : `${customization}${html}`
 }
 
@@ -94,6 +99,146 @@ function isStudioDocument(requestUrl: string) {
   } catch {
     return false
   }
+}
+
+function isStudioJavaScript(requestUrl: string) {
+  try {
+    return /^\/assets\/index-[^/]+\.js$/i.test(
+      new URL(requestUrl, 'http://gravity-frames.local').pathname
+    )
+  } catch {
+    return false
+  }
+}
+
+function patchStudioJavaScript(source: string) {
+  const manifestHelper = `function mergeGravityFramesMasterManifest(data) {
+  try {
+    const hashQuery = location.hash.includes("?") ? location.hash.split("?")[1] : "";
+    if (new URLSearchParams(hashQuery).has("comp") || !Array.isArray(data?.clips)) return data;
+    const encoded = document.querySelector('meta[name="gravity-frames-master-timeline"]')?.getAttribute("content");
+    if (!encoded) return data;
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const master = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(master.clips) || master.clips.length === 0) return data;
+    const receivedById = new Map(data.clips.map((clip) => [clip?.id, clip]));
+    data.clips = master.clips.map((authored) => ({
+      ...(receivedById.get(authored.id) ?? {}),
+      ...authored,
+    }));
+    const numerator = Number.parseFloat(data.fps?.numerator);
+    const denominator = Number.parseFloat(data.fps?.denominator) || 1;
+    const fps = numerator > 0 && denominator > 0
+      ? numerator / denominator
+      : data.durationSeconds > 0
+        ? data.durationInFrames / data.durationSeconds
+        : 30;
+    const masterDuration = Number.parseFloat(master.duration) || 0;
+    if (Number.isFinite(data.durationSeconds)) data.durationSeconds = Math.max(data.durationSeconds, masterDuration);
+    if (Number.isFinite(data.durationInFrames) && fps > 0) {
+      data.durationInFrames = Math.max(data.durationInFrames, Math.round(masterDuration * fps));
+    }
+  } catch {}
+  return data;
+}
+function preserveGravityFramesMasterElements(currentElements, nextElements) {
+  try {
+    const hashQuery = location.hash.includes("?") ? location.hash.split("?")[1] : "";
+    if (new URLSearchParams(hashQuery).has("comp")) return nextElements;
+    const encoded = document.querySelector('meta[name="gravity-frames-master-timeline"]')?.getAttribute("content");
+    if (!encoded) return nextElements;
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const master = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(master.clips) || master.clips.length === 0) return nextElements;
+    const masterById = new Map(master.clips.map((clip) => [clip.id, clip]));
+    const currentById = new Map(currentElements.map((element) => [element?.id, element]));
+    const nextById = new Map(nextElements.map((element) => [element?.id, element]));
+    const retainedTopLevel = nextElements.filter((element) => {
+      const identity = element?.key ?? element?.id;
+      return !masterById.has(element?.id) && typeof identity === "string" && identity.startsWith("index.html#");
+    });
+    const masterElements = master.clips.map((authored) => {
+      const existing = nextById.get(authored.id) ?? currentById.get(authored.id) ?? {};
+      return {
+        ...existing,
+        ...authored,
+        key: existing.key ?? "index.html#" + authored.id,
+        domId: existing.domId ?? authored.id,
+        tag: authored.tagName ?? existing.tag ?? "div",
+        authoredTrack: authored.track,
+        sourceFile: existing.sourceFile ?? "index.html",
+      };
+    });
+    return [...retainedTopLevel, ...masterElements];
+  } catch {}
+  return nextElements;
+}
+function isGravityFramesMasterView() {
+  const hashQuery = location.hash.includes("?") ? location.hash.split("?")[1] : "";
+  return !new URLSearchParams(hashQuery).has("comp") && Boolean(
+    document.querySelector('meta[name="gravity-frames-master-timeline"]')
+  );
+}
+`
+  let patchedSource = source
+  const readableManifest =
+    /(const processTimelineMessage\s*=\s*useCallback\d*\(\s*\(data\)\s*=>\s*\{)/
+  if (readableManifest.test(source)) {
+    patchedSource = source.replace(
+      readableManifest,
+      (match) => `${manifestHelper}${match}
+      data = mergeGravityFramesMasterManifest(data);`
+    )
+  } else {
+    const compactManifest =
+      /(function\s+\w+\(\{iframeRef:\w+,[\s\S]{0,300}?applyPreviewAudioState:\w+\}\)\{const\s+\w+=\w+\.useCallback\((\w+)=>\{)/
+    if (!compactManifest.test(source)) return source
+    patchedSource = source.replace(
+      compactManifest,
+      (match, _prefix, dataName) =>
+        `${manifestHelper}${match}${dataName}=mergeGravityFramesMasterManifest(${dataName});`
+    )
+  }
+  const readableMerge =
+    /(function mergeTimelineElementsPreservingDowngrades\((\w+),\s*(\w+),[^)]*\)\s*\{)/
+  if (readableMerge.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      readableMerge,
+      (match, _prefix, currentName, nextName) =>
+        `${match}\n  ${nextName} = preserveGravityFramesMasterElements(${currentName}, ${nextName});\n  if (isGravityFramesMasterView()) return ${nextName};`
+    )
+  } else {
+    const compactMerge =
+      /(function\s+\w+\((\w+),(\w+),\w+,\w+\)\{)(?=const\s+\w+=Number\.isFinite\(\w+\)\?\w+:0,\w+=Number\.isFinite\(\w+\)\?\w+:0;if\()/
+    patchedSource = patchedSource.replace(
+      compactMerge,
+      (match, _prefix, currentName, nextName) =>
+        `${match}${nextName}=preserveGravityFramesMasterElements(${currentName},${nextName});if(isGravityFramesMasterView())return ${nextName};`
+    )
+  }
+  const readableEnrichment =
+    /(function buildMissingCompositionElements\([^,]+,[^,]+,\s*(\w+),[^)]*\)\s*\{)/
+  if (readableEnrichment.test(patchedSource)) {
+    patchedSource = patchedSource.replace(
+      readableEnrichment,
+      (match, _prefix, currentName) =>
+        `${match}\n  if (isGravityFramesMasterView()) return { missing: [], updatedEls: ${currentName}, patched: false };`
+    )
+  } else {
+    const compactEnrichment =
+      /(function\s+\w+\(\w+,\w+,(\w+),\w+\)\{)(?=const\s+\w+=new Set\(\2\.map\()/
+    patchedSource = patchedSource.replace(
+      compactEnrichment,
+      (match, _prefix, currentName) =>
+        `${match}if(isGravityFramesMasterView())return{missing:[],updatedEls:${currentName},patched:!1};`
+    )
+  }
+  const domChildrenSetter = /(\.setDomClipChildren\()(\w+)(\))/g
+  return patchedSource.replace(
+    domChildrenSetter,
+    (_match, prefix, childrenName, suffix) =>
+      `${prefix}isGravityFramesMasterView() ? [] : ${childrenName}${suffix}`
+  )
 }
 
 function availablePort() {
@@ -138,7 +283,8 @@ async function serveCustomizationAsset(
 function proxyStudioRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  internalPort: number
+  internalPort: number,
+  masterHtml: string
 ) {
   const requestUrl = request.url || '/'
   const headers = {
@@ -161,7 +307,28 @@ function proxyStudioRequest(
         upstreamResponse.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
         upstreamResponse.on('end', () => {
           const content = Buffer.from(
-            injectGravityFramesStudio(Buffer.concat(chunks).toString('utf8')),
+            injectGravityFramesStudio(
+              Buffer.concat(chunks).toString('utf8'),
+              masterHtml
+            ),
+            'utf8'
+          )
+          const responseHeaders = { ...upstreamResponse.headers }
+          delete responseHeaders['content-encoding']
+          delete responseHeaders['transfer-encoding']
+          responseHeaders['content-length'] = String(content.length)
+          responseHeaders['cache-control'] = 'no-store'
+          response.writeHead(upstreamResponse.statusCode || 200, responseHeaders)
+          response.end(content)
+        })
+        return
+      }
+      if (isStudioJavaScript(requestUrl)) {
+        const chunks: Buffer[] = []
+        upstreamResponse.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+        upstreamResponse.on('end', () => {
+          const content = Buffer.from(
+            patchStudioJavaScript(Buffer.concat(chunks).toString('utf8')),
             'utf8'
           )
           const responseHeaders = { ...upstreamResponse.headers }
@@ -444,6 +611,57 @@ function compositionHosts(html: string): CompositionHostInfo[] {
   ).filter((host) => host.sourcePath)
 }
 
+function masterTimelineBootstrap(html: string) {
+  const root = compositionRootTag(html)
+  const clips = Array.from(
+    html.matchAll(
+      /<[a-z][\w:-]*\b[^>]*\bdata-composition-src\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>/gi
+    ),
+    (match, index) => {
+      const tag = match[0]
+      const compositionId = htmlAttribute(tag, 'data-composition-id')
+      const compositionSrc = htmlAttribute(tag, 'data-composition-src')
+      const duration = numericAttribute(tag, 'data-duration', 0)
+      if (!compositionId || !compositionSrc || duration <= 0) return null
+      const id = htmlAttribute(tag, 'id') || `${compositionId}-host-${index + 1}`
+      const timelineLabel =
+        htmlAttribute(tag, 'data-timeline-label') ||
+        htmlAttribute(tag, 'data-label') ||
+        compositionId
+      return {
+        id,
+        label: timelineLabel,
+        start: numericAttribute(tag, 'data-start', 0),
+        duration,
+        track: numericAttribute(tag, 'data-track-index', index),
+        zIndex: 0,
+        stackingContextId: null,
+        kind: 'composition',
+        tagName: tag.match(/^<([a-z][\w:-]*)/i)?.[1]?.toLowerCase() || 'div',
+        compositionId,
+        compositionAncestors: [],
+        parentCompositionId: null,
+        nodePath: null,
+        compositionSrc,
+        playbackStart: numericAttribute(tag, 'data-playback-start', 0),
+        playbackRate: Math.max(0.1, numericAttribute(tag, 'data-playback-rate', 1)),
+        assetUrl: null,
+        timelineRole: htmlAttribute(tag, 'data-timeline-role') || null,
+        timelineLabel,
+        timelineGroup: htmlAttribute(tag, 'data-timeline-group') || null,
+        timelinePriority: null,
+      }
+    }
+  ).filter((clip) => clip !== null)
+  return {
+    clips,
+    duration: Math.max(
+      compositionNumber(html, 'data-duration', 0),
+      ...clips.map((clip) => clip.start + clip.duration)
+    ),
+  }
+}
+
 function compositionEnd(html: string) {
   return compositionHosts(html).reduce(
     (maximum, host) => Math.max(maximum, host.start + host.duration),
@@ -641,7 +859,8 @@ async function writeCompositionFile(
 
 async function createStudioProxy(
   appPath: string,
-  internalPort: number
+  internalPort: number,
+  masterHtml: string
 ): Promise<StudioProxy> {
   const server = createServer((request, response) => {
     const pathname = new URL(
@@ -650,7 +869,7 @@ async function createStudioProxy(
     ).pathname
     void serveCustomizationAsset(pathname, appPath, response)
       .then((served) => {
-        if (!served) proxyStudioRequest(request, response, internalPort)
+        if (!served) proxyStudioRequest(request, response, internalPort, masterHtml)
       })
       .catch((error) => {
         response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
@@ -703,7 +922,7 @@ export async function openHyperframesStudio(options: {
   closeHyperframesStudio()
 
   const internalPort = await availablePort()
-  const proxy = await createStudioProxy(options.appPath, internalPort)
+  const proxy = await createStudioProxy(options.appPath, internalPort, preparedHtml)
   const cliPath = await resolveHyperframesBin(options.appPath)
   const child = spawn(
     process.execPath,
