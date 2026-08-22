@@ -1,8 +1,11 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
+  Check,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
+  Cpu,
   ExternalLink,
   ImagePlus,
   LoaderCircle,
@@ -13,6 +16,7 @@ import {
   UserRound,
   WandSparkles,
   X,
+  Zap,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../../store/useEditorStore'
@@ -37,6 +41,50 @@ function escapeHtml(value: string) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+interface ModelInfo {
+  id: string
+  name: string
+  provider: 'Google' | 'Anthropic' | 'OpenAI' | 'Other'
+  badge: string
+  badgeColor: string
+}
+
+function parseModelDetails(modelName: string): ModelInfo {
+  let provider: 'Google' | 'Anthropic' | 'OpenAI' | 'Other' = 'Google'
+  let badge = 'Standard'
+  let badgeColor = 'text-neutral-400 bg-neutral-500/10 border-neutral-500/20'
+
+  if (/claude/i.test(modelName)) {
+    provider = 'Anthropic'
+  } else if (/gpt/i.test(modelName)) {
+    provider = 'OpenAI'
+  } else if (/gemini/i.test(modelName)) {
+    provider = 'Google'
+  }
+
+  if (/thinking/i.test(modelName)) {
+    badge = 'Thinking'
+    badgeColor = 'text-purple-400 bg-purple-500/10 border-purple-500/20'
+  } else if (/high/i.test(modelName)) {
+    badge = 'High Reasoning'
+    badgeColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+  } else if (/medium/i.test(modelName)) {
+    badge = 'Balanced'
+    badgeColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+  } else if (/low/i.test(modelName)) {
+    badge = 'Fast'
+    badgeColor = 'text-sky-400 bg-sky-500/10 border-sky-500/20'
+  }
+
+  return {
+    id: modelName,
+    name: modelName,
+    provider,
+    badge,
+    badgeColor,
+  }
 }
 
 export function seedComposition(scene: SceneSegment, requestedCompositionId?: string) {
@@ -183,10 +231,12 @@ export default function AntigravityChat({
     activeSceneId,
     agentChat,
     antigravityConversationId,
+    antigravityModel,
     updateScene,
     appendAgentChat,
     clearAgentChat,
     setAntigravityConversationId,
+    setAntigravityModel,
   } = useEditorStore(
     useShallow((state) => ({
       projectId: state.projectId,
@@ -194,10 +244,12 @@ export default function AntigravityChat({
       activeSceneId: state.activeSceneId,
       agentChat: state.agentChat,
       antigravityConversationId: state.antigravityConversationId,
+      antigravityModel: state.antigravityModel,
       updateScene: state.updateScene,
       appendAgentChat: state.appendAgentChat,
       clearAgentChat: state.clearAgentChat,
       setAntigravityConversationId: state.setAntigravityConversationId,
+      setAntigravityModel: state.setAntigravityModel,
     }))
   )
   const activeScene = scenes.find((scene) => scene.id === activeSceneId)
@@ -208,14 +260,81 @@ export default function AntigravityChat({
   const [referenceImages, setReferenceImages] = useState<ChatReferenceImage[]>([])
   const [isAddingReference, setIsAddingReference] = useState(false)
   const [referenceError, setReferenceError] = useState('')
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const modelDropdownRef = useRef<HTMLDivElement>(null)
 
   const sceneMessages = useMemo(
     () => agentChat.filter((message) => !message.sceneId || message.sceneId === activeSceneId),
     [agentChat, activeSceneId]
   )
 
+  const availableModels = useMemo(() => {
+    return status?.models && status.models.length > 0
+      ? status.models
+      : [
+          'Gemini 3.7 Flash (High)',
+          'Gemini 3.7 Flash (Medium)',
+          'Gemini 3.7 Flash (Low)',
+          'Gemini 3.6 Flash (High)',
+          'Gemini 3.6 Flash (Medium)',
+          'Gemini 3.6 Flash (Low)',
+          'Gemini 3.5 Flash (High)',
+          'Gemini 3.5 Flash (Medium)',
+          'Gemini 3.5 Flash (Low)',
+          'Gemini 3.1 Pro (High)',
+          'Gemini 3.1 Pro (Low)',
+          'Claude Sonnet 4.6 (Thinking)',
+          'Claude Opus 4.6 (Thinking)',
+          'GPT-OSS 120B (Medium)',
+        ]
+  }, [status?.models])
+
+  const groupedModels = useMemo(() => {
+    const groups: { [key: string]: string[] } = {
+      'Google Gemini': [],
+      'Anthropic Claude': [],
+      'OpenAI / Other': [],
+    }
+    for (const model of availableModels) {
+      if (/gemini/i.test(model)) {
+        groups['Google Gemini'].push(model)
+      } else if (/claude/i.test(model)) {
+        groups['Anthropic Claude'].push(model)
+      } else {
+        groups['OpenAI / Other'].push(model)
+      }
+    }
+    return Object.entries(groups).filter(([_, list]) => list.length > 0)
+  }, [availableModels])
+
+  const activeModelDetails = useMemo(
+    () => parseModelDetails(antigravityModel || 'Gemini 3.7 Flash (High)'),
+    [antigravityModel]
+  )
+
   const refreshStatus = () => window.electronAPI.getAntigravityStatus().then(setStatus)
+
+  useEffect(() => {
+    if (!modelDropdownOpen) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        modelDropdownRef.current &&
+        !modelDropdownRef.current.contains(event.target as Node)
+      ) {
+        setModelDropdownOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModelDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [modelDropdownOpen])
 
   useEffect(() => {
     void refreshStatus()
@@ -349,6 +468,7 @@ export default function AntigravityChat({
         requestId,
         projectId,
         conversationId: antigravityConversationId || undefined,
+        model: antigravityModel || undefined,
         prompt: buildAgentPrompt(
           activeScene,
           request,
@@ -420,46 +540,142 @@ export default function AntigravityChat({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-neutral-950">
-      <div className="flex shrink-0 items-center justify-between border-b border-neutral-800 px-4 py-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs font-semibold text-neutral-100">
-            <div className="flex h-6 w-6 items-center justify-center rounded-md border border-[#3ce6ac]/20 bg-[#3ce6ac]/10 text-[#3ce6ac]">
-              <Sparkles className="h-3.5 w-3.5" />
+      <div className="flex shrink-0 flex-col gap-2.5 border-b border-neutral-800 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-semibold text-neutral-100">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md border border-[#3ce6ac]/20 bg-[#3ce6ac]/10 text-[#3ce6ac]">
+                <Sparkles className="h-3.5 w-3.5" />
+              </div>
+              Antigravity
             </div>
-            Antigravity
+            <div className="mt-1 flex items-center gap-1.5 text-[9px] text-neutral-500">
+              {status?.installed && status.minimumVersionMet ? (
+                <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+              ) : (
+                <CircleAlert className="h-3 w-3 text-amber-400" />
+              )}
+              {status?.installed ? status.version || 'CLI installed' : 'CLI required'} · system keyring OAuth
+            </div>
+            <div
+              className="mt-0.5 flex max-w-[230px] items-center gap-1.5 truncate text-[9px] text-neutral-400"
+              title={status?.accountEmail || status?.message}
+            >
+              <UserRound className="h-3 w-3 shrink-0 text-[#3ce6ac]" />
+              {status?.accountEmail ? (
+                <span className="truncate">
+                  Account · {status.accountEmail}{status.accountPlan ? ` · ${status.accountPlan}` : ''}
+                </span>
+              ) : status?.installed ? (
+                <span className="truncate">Account · confirm by sending your first message</span>
+              ) : (
+                <span>Account · not connected</span>
+              )}
+            </div>
           </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[9px] text-neutral-500">
-            {status?.installed && status.minimumVersionMet ? (
-              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-            ) : (
-              <CircleAlert className="h-3 w-3 text-amber-400" />
-            )}
-            {status?.installed ? status.version || 'CLI installed' : 'CLI required'} · system keyring OAuth
-          </div>
-          <div
-            className="mt-1 flex max-w-[230px] items-center gap-1.5 truncate text-[9px] text-neutral-400"
-            title={status?.accountEmail || status?.message}
-          >
-            <UserRound className="h-3 w-3 shrink-0 text-[#3ce6ac]" />
-            {status?.accountEmail ? (
-              <span className="truncate">
-                Account · {status.accountEmail}{status.accountPlan ? ` · ${status.accountPlan}` : ''}
-              </span>
-            ) : status?.installed ? (
-              <span className="truncate">Account · confirm by sending your first message</span>
-            ) : (
-              <span>Account · not connected</span>
-            )}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={connect}
+              className="flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-[9px] text-neutral-300 hover:border-neutral-600 hover:bg-neutral-800"
+            >
+              {status?.installed ? <LogIn className="h-3 w-3" /> : <ExternalLink className="h-3 w-3" />}
+              {status?.installed ? 'Connect' : 'Install'}
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+
+        {/* Model Selection Dropdown Bar */}
+        <div className="relative" ref={modelDropdownRef}>
           <button
-            onClick={connect}
-            className="flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-[9px] text-neutral-300 hover:border-neutral-600 hover:bg-neutral-800"
+            type="button"
+            onClick={() => setModelDropdownOpen((prev) => !prev)}
+            aria-haspopup="listbox"
+            aria-expanded={modelDropdownOpen}
+            className={`group flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[10px] transition ${
+              modelDropdownOpen
+                ? 'border-[#3ce6ac]/60 bg-neutral-900 ring-1 ring-[#3ce6ac]/20'
+                : 'border-neutral-800/90 bg-neutral-900/60 hover:border-neutral-700 hover:bg-neutral-900'
+            }`}
           >
-            {status?.installed ? <LogIn className="h-3 w-3" /> : <ExternalLink className="h-3 w-3" />}
-            {status?.installed ? 'Connect' : 'Install'}
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-[#3ce6ac]/20 bg-[#3ce6ac]/10 text-[#3ce6ac]">
+                <Cpu className="h-3 w-3" />
+              </div>
+              <div className="min-w-0 flex-1 truncate">
+                <span className="text-[9px] text-neutral-500">Model: </span>
+                <span className="font-medium text-neutral-200 group-hover:text-white">
+                  {antigravityModel || 'Gemini 3.7 Flash (High)'}
+                </span>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span
+                className={`rounded border px-1.5 py-0.5 text-[8px] font-medium leading-none ${activeModelDetails.badgeColor}`}
+              >
+                {activeModelDetails.badge}
+              </span>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${
+                  modelDropdownOpen ? 'rotate-180 text-[#3ce6ac]' : ''
+                }`}
+              />
+            </div>
           </button>
+
+          {modelDropdownOpen && (
+            <div
+              className="custom-scrollbar absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-neutral-700/80 bg-neutral-950/95 p-1.5 shadow-2xl backdrop-blur-xl ring-1 ring-black/60"
+              role="listbox"
+            >
+              <div className="px-2 py-1 text-[8px] font-semibold uppercase tracking-wider text-neutral-500">
+                Select Model
+              </div>
+              {groupedModels.map(([groupName, models]) => (
+                <div key={groupName} className="mb-1.5 last:mb-0">
+                  <div className="px-2 py-1 text-[8px] font-semibold uppercase tracking-wider text-neutral-500">
+                    {groupName}
+                  </div>
+                  <div className="space-y-0.5">
+                    {models.map((model) => {
+                      const isSelected = model === antigravityModel
+                      const details = parseModelDetails(model)
+                      return (
+                        <button
+                          key={model}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          onClick={() => {
+                            setAntigravityModel(model)
+                            setModelDropdownOpen(false)
+                          }}
+                          className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[10px] transition ${
+                            isSelected
+                              ? 'border border-[#3ce6ac]/30 bg-[#3ce6ac]/10 text-neutral-100 font-medium'
+                              : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'
+                          }`}
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            {isSelected ? (
+                              <Check className="h-3 w-3 shrink-0 text-[#3ce6ac]" />
+                            ) : (
+                              <div className="h-3 w-3 shrink-0" />
+                            )}
+                            <span className="truncate">{model}</span>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded border px-1.5 py-0.5 text-[8px] font-medium leading-none ${details.badgeColor}`}
+                          >
+                            {details.badge}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -587,6 +803,15 @@ export default function AntigravityChat({
                   <ImagePlus className="h-3 w-3" />
                 )}
                 Add image
+              </button>
+              <button
+                type="button"
+                onClick={() => setModelDropdownOpen((prev) => !prev)}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] text-neutral-400 hover:bg-neutral-800/80 hover:text-neutral-200"
+                title={`Active model: ${antigravityModel || 'Gemini 3.7 Flash (High)'} - click to change`}
+              >
+                <Cpu className="h-2.5 w-2.5 text-[#3ce6ac]" />
+                <span className="max-w-[120px] truncate">{antigravityModel || 'Gemini 3.7 Flash (High)'}</span>
               </button>
               <div className="hidden items-center gap-1 text-[9px] text-neutral-600 xl:flex">
                 <WandSparkles className="h-3 w-3" /> Paste with Ctrl+V

@@ -12,6 +12,23 @@ const MINIMUM_VERSION = [1, 1, 7] as const
 const activeRuns = new Map<string, ChildProcessWithoutNullStreams>()
 let lastKnownAccount: { accountEmail?: string; accountPlan?: string } = {}
 
+export const DEFAULT_ANTIGRAVITY_MODELS = [
+  'Gemini 3.7 Flash (High)',
+  'Gemini 3.7 Flash (Medium)',
+  'Gemini 3.7 Flash (Low)',
+  'Gemini 3.6 Flash (High)',
+  'Gemini 3.6 Flash (Medium)',
+  'Gemini 3.6 Flash (Low)',
+  'Gemini 3.5 Flash (High)',
+  'Gemini 3.5 Flash (Medium)',
+  'Gemini 3.5 Flash (Low)',
+  'Gemini 3.1 Pro (High)',
+  'Gemini 3.1 Pro (Low)',
+  'Claude Sonnet 4.6 (Thinking)',
+  'Claude Opus 4.6 (Thinking)',
+  'GPT-OSS 120B (Medium)',
+] as const
+
 function accountVisibleEnvironment() {
   const environment = { ...process.env }
   delete environment.AGY_CLI_HIDE_ACCOUNT_INFO
@@ -123,6 +140,7 @@ export async function getAntigravityStatus(): Promise<AntigravityStatus> {
       installed: false,
       minimumVersionMet: false,
       authOwner: 'system-keyring',
+      models: [...DEFAULT_ANTIGRAVITY_MODELS],
       message: 'Install Antigravity CLI 1.1.7 or newer to use agent chat.',
     }
   }
@@ -143,6 +161,7 @@ export async function getAntigravityStatus(): Promise<AntigravityStatus> {
       ...lastKnownAccount,
       minimumVersionMet,
       authOwner: 'system-keyring',
+      models: [...DEFAULT_ANTIGRAVITY_MODELS],
       message: minimumVersionMet
         ? 'OAuth is managed by Antigravity CLI and your system keyring.'
         : 'Update Antigravity CLI to 1.1.7 or newer for structured headless output.',
@@ -154,6 +173,7 @@ export async function getAntigravityStatus(): Promise<AntigravityStatus> {
       ...lastKnownAccount,
       minimumVersionMet: false,
       authOwner: 'system-keyring',
+      models: [...DEFAULT_ANTIGRAVITY_MODELS],
       message: error instanceof Error ? error.message : String(error),
     }
   }
@@ -183,6 +203,38 @@ function recursivelyFind(
     if (nested && typeof nested === 'object') recursivelyFind(nested, keyPattern, results)
   }
   return results
+}
+
+function extractErrorMessage(stdout: string, stderr: string): string {
+  const trimmedStderr = stderr.trim()
+  if (trimmedStderr) return trimmedStderr
+
+  for (const line of stdout.split(/\r?\n/).reverse()) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (parsed?.result?.error && typeof parsed.result.error === 'string') {
+        return parsed.result.error
+      }
+      if (parsed?.error?.message && typeof parsed.error.message === 'string') {
+        return parsed.error.message
+      }
+      if (parsed?.error && typeof parsed.error === 'string') {
+        return parsed.error
+      }
+      if (parsed?.message && typeof parsed.message === 'string') {
+        return parsed.message
+      }
+    } catch {
+      // Line is not JSON
+    }
+  }
+
+  return (
+    stdout.trim() ||
+    'Antigravity stopped before producing a response. Sign in from Connect and try again.'
+  )
 }
 
 function parseHeadlessOutput(raw: string): AntigravityRunResult {
@@ -240,7 +292,8 @@ export async function runAntigravity(
   prompt: string,
   cwd: string,
   conversationId: string | undefined,
-  onChunk: (stream: 'stdout' | 'stderr', chunk: string) => void
+  onChunk: (stream: 'stdout' | 'stderr', chunk: string) => void,
+  model?: string
 ) {
   if (activeRuns.has(requestId)) throw new Error('This Antigravity request is already running.')
   if (!prompt.trim()) throw new Error('Prompt cannot be empty.')
@@ -250,8 +303,9 @@ export async function runAntigravity(
   if (!status.installed || !status.executablePath) throw new Error(status.message)
   if (!status.minimumVersionMet) throw new Error(status.message)
 
-  const args = ['--print', prompt, '--output-format', 'stream-json']
+  const args = ['--print', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions']
   if (conversationId) args.push('--conversation', conversationId)
+  if (model?.trim()) args.push('--model', model.trim())
 
   return await new Promise<AntigravityRunResult>((resolve, reject) => {
     const child = spawn(status.executablePath!, args, {
@@ -284,13 +338,7 @@ export async function runAntigravity(
       activeRuns.delete(requestId)
       rememberAccount(`${stdout}\n${stderr}`)
       if (code !== 0) {
-        reject(
-          new Error(
-            stderr.trim() ||
-              stdout.trim() ||
-              'Antigravity stopped before producing a response. Sign in from Connect and try again.'
-          )
-        )
+        reject(new Error(extractErrorMessage(stdout, stderr)))
         return
       }
       resolve(parseHeadlessOutput(stdout))

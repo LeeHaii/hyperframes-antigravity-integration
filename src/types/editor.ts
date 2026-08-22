@@ -149,6 +149,7 @@ export interface ProjectDocument {
   visualGapsFilled?: boolean
   agentChat?: AgentChatMessage[]
   antigravityConversationId?: string
+  antigravityModel?: string
   timingRepair?: {
     previousTimelineDuration: number
     actualAudioDuration: number
@@ -215,6 +216,7 @@ export interface AntigravityStatus {
   minimumVersionMet: boolean
   authOwner: 'system-keyring'
   message: string
+  models?: string[]
 }
 
 export interface AntigravityRunRequest {
@@ -222,6 +224,7 @@ export interface AntigravityRunRequest {
   prompt: string
   projectId: string
   conversationId?: string
+  model?: string
 }
 
 export interface StudioAntigravityRunRequest extends AntigravityRunRequest {

@@ -222,7 +222,8 @@ ipcMain.handle('antigravity-run', async (event, request) => {
           chunk,
         })
       }
-    }
+    },
+    request?.model ? String(request.model) : undefined
   )
 })
 
@@ -248,7 +249,8 @@ ipcMain.handle('antigravity-run-studio', async (event, request) => {
           chunk,
         })
       }
-    }
+    },
+    request?.model ? String(request.model) : undefined
   )
 })
 

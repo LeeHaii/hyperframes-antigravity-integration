@@ -217,6 +217,7 @@ interface EditorStore {
   subtitleSettings: SubtitleSettings
   agentChat: AgentChatMessage[]
   antigravityConversationId: string | null
+  antigravityModel: string
   activeSceneId: string | null
   activeAudioClipId: string | null
   activeSubtitleId: string | null
@@ -313,6 +314,7 @@ interface EditorStore {
   appendAgentChat: (message: AgentChatMessage) => void
   clearAgentChat: () => void
   setAntigravityConversationId: (id: string | null) => void
+  setAntigravityModel: (model: string) => void
   checkpointHistory: () => void
   undo: () => void
   redo: () => void
@@ -376,6 +378,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
   subtitleSettings: defaultSubtitleSettings,
   agentChat: [],
   antigravityConversationId: null,
+  antigravityModel:
+    (typeof window !== 'undefined' &&
+      localStorage.getItem('hyperframes:antigravityModel')) ||
+    'Gemini 3.7 Flash (High)',
   activeSceneId: null,
   activeAudioClipId: null,
   activeSubtitleId: null,
@@ -419,6 +425,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
       subtitleSettings: defaultSubtitleSettings,
       agentChat: [],
       antigravityConversationId: null,
+      antigravityModel:
+        (typeof window !== 'undefined' &&
+          localStorage.getItem('hyperframes:antigravityModel')) ||
+        'Gemini 3.7 Flash (High)',
       activeSceneId: null,
       activeAudioClipId: null,
       activeSubtitleId: null,
@@ -470,6 +480,11 @@ export const useEditorStore = create<EditorStore>((set) => ({
       subtitleSettings: normalizeSubtitleSettings(project.subtitleSettings),
       agentChat: project.agentChat || [],
       antigravityConversationId: project.antigravityConversationId || null,
+      antigravityModel:
+        project.antigravityModel ||
+        (typeof window !== 'undefined' &&
+          localStorage.getItem('hyperframes:antigravityModel')) ||
+        'Gemini 3.7 Flash (High)',
       activeSceneId: scenes[0]?.id || null,
       activeAudioClipId: null,
       activeSubtitleId: subtitles[0]?.id || null,
@@ -500,6 +515,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
       audioClips: [],
       agentChat: [],
       antigravityConversationId: null,
+      antigravityModel:
+        (typeof window !== 'undefined' &&
+          localStorage.getItem('hyperframes:antigravityModel')) ||
+        'Gemini 3.7 Flash (High)',
       activeSceneId: null,
       activeAudioClipId: null,
       activeSubtitleId: null,
@@ -1209,6 +1228,16 @@ export const useEditorStore = create<EditorStore>((set) => ({
     }),
   setAntigravityConversationId: (antigravityConversationId) =>
     set({ antigravityConversationId, projectUpdatedAt: markUpdated() }),
+  setAntigravityModel: (antigravityModel) => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('hyperframes:antigravityModel', antigravityModel)
+      }
+    } catch {
+      // ignore
+    }
+    set({ antigravityModel, projectUpdatedAt: markUpdated() })
+  },
   checkpointHistory: () =>
     set((state) => ({
       history: [...state.history.slice(-49), capture(state)],
@@ -1260,6 +1289,7 @@ export function getProjectDocument(): ProjectDocument | null {
     subtitleSettings: state.subtitleSettings,
     agentChat: state.agentChat,
     antigravityConversationId: state.antigravityConversationId || undefined,
+    antigravityModel: state.antigravityModel || undefined,
     visualGapsFilled: true,
   }
 }

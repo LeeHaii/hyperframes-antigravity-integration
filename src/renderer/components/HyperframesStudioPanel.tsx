@@ -281,6 +281,7 @@ export default function HyperframesStudioPanel() {
           sceneId: activeScene.id,
           prompt,
           conversationId: studioAgentConversationIdRef.current,
+          model: useEditorStore.getState().antigravityModel || undefined,
         })
         if (result.conversationId) {
           studioAgentConversationIdRef.current = result.conversationId

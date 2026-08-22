@@ -30,7 +30,15 @@ export default function ProjectSettingsDialog({
   onClose: () => void
   onStorageChanged?: () => void
 }) {
-  const { apiKeys, setApiKeys, projectId, projectName, loadProject } = useEditorStore()
+  const {
+    apiKeys,
+    setApiKeys,
+    projectId,
+    projectName,
+    loadProject,
+    antigravityModel,
+    setAntigravityModel,
+  } = useEditorStore()
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState(projectId || '')
@@ -482,6 +490,40 @@ export default function ProjectSettingsDialog({
                     <RefreshCcw className="h-3.5 w-3.5" />
                     Refresh
                   </button>
+                </div>
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <label className="block text-[9px] font-medium text-slate-400">
+                    Antigravity Model
+                  </label>
+                  <select
+                    value={antigravityModel}
+                    onChange={(e) => setAntigravityModel(e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-white/10 bg-[#0d0f14] px-2.5 py-1.5 text-[10px] text-slate-200 outline-none focus:border-emerald-400/50"
+                  >
+                    {(antigravity?.models && antigravity.models.length > 0
+                      ? antigravity.models
+                      : [
+                          'Gemini 3.7 Flash (High)',
+                          'Gemini 3.7 Flash (Medium)',
+                          'Gemini 3.7 Flash (Low)',
+                          'Gemini 3.6 Flash (High)',
+                          'Gemini 3.6 Flash (Medium)',
+                          'Gemini 3.6 Flash (Low)',
+                          'Gemini 3.5 Flash (High)',
+                          'Gemini 3.5 Flash (Medium)',
+                          'Gemini 3.5 Flash (Low)',
+                          'Gemini 3.1 Pro (High)',
+                          'Gemini 3.1 Pro (Low)',
+                          'Claude Sonnet 4.6 (Thinking)',
+                          'Claude Opus 4.6 (Thinking)',
+                          'GPT-OSS 120B (Medium)',
+                        ]
+                    ).map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
