@@ -177,7 +177,7 @@ function buildAgentPrompt(
     .join('\n')
   const visualReferences = referenceImages.length
     ? referenceImages
-        .map((image) => `- ${image.relativePath} (${image.name})`)
+        .map((image, index) => `${index + 1}. ${image.path} (${image.name})`)
         .join('\n')
     : '(none)'
 
@@ -192,7 +192,8 @@ Hard requirements:
 - Animations must be deterministic and seekable. Prefer a paused GSAP timeline registered in window.__timelines[compositionId]. Do not use setTimeout, Date, random values, autoplay loops, or wall-clock-only CSS animation.
 - Keep the exact child duration ${clipDurationSec} seconds. The HTML must work directly in @hyperframes/player and with the HyperFrames CLI.
 - Preserve any existing local media URL exactly unless the user asks to remove it.
-- Do not access the filesystem except to inspect the read-only visual reference files listed below. Do not use shell, network APIs, cookies, localStorage, parent window, or Electron APIs. CDN script tags for animation libraries are allowed.
+- Do not use shell commands, network APIs, cookies, localStorage, the parent window, or Electron APIs. CDN script tags for animation libraries are allowed.
+- Filesystem access is restricted to calling the view_file tool on the exact visual reference files listed below. Never call find_by_name, grep_search, or run_command to locate them, and never search outside the current working directory.
 - Before the HTML fence, give a concise one-sentence summary. Do not output a diff.
 
 Selected scene:
@@ -201,8 +202,9 @@ Selected scene:
 - media: ${scene.media?.title || 'none (blank scene)'}
 - user request: ${request}
 
-Visual references (inspect these files before designing):
+Visual references (MANDATORY FIRST STEP — before designing, call the view_file tool on each of these exact image files, in order, and base your design on what you see):
 ${visualReferences}
+If view_file fails on a reference, continue with the remaining ones and mention it in your summary. Never guess a reference's contents and never search for these files elsewhere on disk.
 
 Recent scene conversation:
 ${compactHistory || '(none)'}

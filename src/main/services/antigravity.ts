@@ -303,7 +303,15 @@ export async function runAntigravity(
   if (!status.installed || !status.executablePath) throw new Error(status.message)
   if (!status.minimumVersionMet) throw new Error(status.message)
 
-  const args = ['--print', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions']
+  const args = [
+    '--dangerously-skip-permissions',
+    '--print',
+    prompt,
+    '--output-format',
+    'stream-json',
+    '--print-timeout',
+    '20m',
+  ]
   if (conversationId) args.push('--conversation', conversationId)
   if (model?.trim()) args.push('--model', model.trim())
 
@@ -318,8 +326,19 @@ export async function runAntigravity(
     let stderr = ''
 
     const timeout = setTimeout(() => child.kill(), 20 * 60 * 1_000)
+    let sawInitPermissionMode = false
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
+      if (!sawInitPermissionMode && chunk.includes('"event":"init"')) {
+        sawInitPermissionMode = true
+        const match = chunk.match(/"permission_mode":"([^"]+)"/)
+        if (match && match[1] !== 'always-proceed') {
+          console.warn(
+            `[antigravity] CLI started with permission_mode "${match[1]}"; ` +
+              'expected "always-proceed". Tool permission denials will abort headless runs.'
+          )
+        }
+      }
       stdout += chunk
       onChunk('stdout', chunk)
     })
