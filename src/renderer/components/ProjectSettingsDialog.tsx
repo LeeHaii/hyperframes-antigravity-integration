@@ -5,7 +5,6 @@ import {
   Cpu,
   ExternalLink,
   FolderOpen,
-  KeyRound,
   LogIn,
   Plus,
   RefreshCcw,
@@ -31,8 +30,6 @@ export default function ProjectSettingsDialog({
   onStorageChanged?: () => void
 }) {
   const {
-    apiKeys,
-    setApiKeys,
     projectId,
     projectName,
     loadProject,
@@ -113,13 +110,6 @@ export default function ProjectSettingsDialog({
     } finally {
       setBusy(null)
     }
-  }
-
-  const updateKey = (key: 'groq' | 'pexels' | 'youtube', value: string) => {
-    setApiKeys({ [key]: value })
-    if (key === 'groq') void window.electronAPI.setGroqKey(value)
-    else if (key === 'pexels') void window.electronAPI.setPexelsKey(value)
-    else void window.electronAPI.setYouTubeKey(value)
   }
 
   const chooseProjectsFolder = async () => {
@@ -554,60 +544,9 @@ export default function ProjectSettingsDialog({
           </section>
 
           <section className="border-t border-white/10 pt-5">
-            <h3 className="text-xs font-medium text-slate-200">AI scene builder</h3>
-            <label className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-black/15 p-3">
-              <div>
-                <div className="text-[11px] text-slate-300">
-                  Auto-fill new scenes with Pexels video
-                </div>
-                <div className="mt-1 text-[9px] text-slate-600">
-                  Uses Groq's recommended keywords after transcription.
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={settings?.autoStockEnabled ?? true}
-                onChange={async (event) =>
-                  setSettings(
-                    await window.electronAPI.setAutoStockEnabled(event.target.checked)
-                  )
-                }
-                className="h-4 w-4 accent-violet-500"
-              />
-            </label>
-          </section>
-
-          <section className="border-t border-white/10 pt-5">
-            <div className="mb-3 flex items-center gap-2">
-              <KeyRound className="h-3.5 w-3.5 text-slate-500" />
-              <h3 className="text-xs font-medium text-slate-200">API keys</h3>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {(
-                [
-                  ['groq', 'Groq API key', 'Whisper transcription'],
-                  ['pexels', 'Pexels API key', 'Automatic stock footage'],
-                  ['youtube', 'YouTube Data API key', 'YouTube search'],
-                ] as const
-              ).map(([key, label, hint]) => (
-                <label key={key} className="text-[10px] text-slate-500">
-                  {label}
-                  <input
-                    type="password"
-                    value={apiKeys[key]}
-                    onChange={(event) => updateKey(key, event.target.value)}
-                    placeholder={hint}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-white/10 bg-[#0d0f14] px-3 text-xs text-slate-300 outline-none focus:border-violet-500/50"
-                  />
-                </label>
-              ))}
-            </div>
-          </section>
-
-          <section className="border-t border-white/10 pt-5">
             <h3 className="text-xs font-medium text-slate-200">Temporary data</h3>
             <p className="mt-1 text-[10px] text-slate-500">
-              Transcription chunks and app cache: {formatBytes(settings?.cacheSizeBytes || 0)}.
+              Render cache and temporary files: {formatBytes(settings?.cacheSizeBytes || 0)}.
               Reusable generated clips in the working folder are preserved.
             </p>
             <button

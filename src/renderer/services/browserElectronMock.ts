@@ -52,13 +52,8 @@ if (!window.electronAPI) {
     closeHyperframesStudio: async () => true,
     openChatReferenceImages: async () => [],
     saveChatReferenceImage: unavailable,
-    openAudioFile: async () => null,
     openMediaFiles: async () => [],
     getMediaDuration: async () => null,
-    transcribeAudio: unavailable,
-    onTranscriptionProgress: noop,
-    autoMatchPexelsVideos: unavailable,
-    onPexelsAutoMatchProgress: noop,
     listProjects: async () => [],
     loadProject: async (projectId) => {
       const project = projects.get(projectId)
@@ -81,7 +76,6 @@ if (!window.electronAPI) {
       workingDirectory: 'Browser preview renders/.gravity-frames',
       studioProjectsDirectory: 'Browser preview renders/.gravity-frames/studio',
       defaultStudioProjectsDirectory: 'Browser preview renders/.gravity-frames/studio',
-      autoStockEnabled: false,
       cacheSizeBytes: 0,
       workingFilesSizeBytes: 0,
     }),
@@ -92,13 +86,7 @@ if (!window.electronAPI) {
     chooseStudioProjectsDirectory: async () => null,
     resetStudioProjectsDirectory: unavailable,
     openStudioProjectsDirectory: unavailable,
-    setAutoStockEnabled: unavailable,
     clearCache: unavailable,
-    trimYouTube: unavailable,
-    onYouTubeTrimProgress: noop,
-    searchImages: async () => [],
-    searchDuckDuckGoImages: async () => [],
-    searchYouTube: async () => [],
     getDefaultExportPath: async (defaultName) =>
       `Browser preview renders/${defaultName}`,
     chooseExportPath: async () => null,
@@ -115,11 +103,5 @@ if (!window.electronAPI) {
     batchExportProjects: unavailable,
     cancelBatchExport: async () => false,
     onBatchExportProgress: noop,
-    getPexelsKey: async () => null,
-    setPexelsKey: async () => undefined,
-    getGroqKey: async () => null,
-    setGroqKey: async () => undefined,
-    getYouTubeKey: async () => null,
-    setYouTubeKey: async () => undefined,
   } as ElectronAPI
 }

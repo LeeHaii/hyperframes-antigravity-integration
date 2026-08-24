@@ -72,7 +72,6 @@ function StudioWorkspace() {
 export default function App() {
   const projectId = useEditorStore((state) => state.projectId)
   const loadProject = useEditorStore((state) => state.loadProject)
-  const setApiKeys = useEditorStore((state) => state.setApiKeys)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -97,20 +96,6 @@ export default function App() {
       cancelled = true
     }
   }, [loadProject])
-
-  useEffect(() => {
-    Promise.all([
-      window.electronAPI.getGroqKey(),
-      window.electronAPI.getPexelsKey(),
-      window.electronAPI.getYouTubeKey(),
-    ]).then(([groq, pexels, youtube]) =>
-      setApiKeys({
-        groq: groq || '',
-        pexels: pexels || '',
-        youtube: youtube || '',
-      })
-    )
-  }, [setApiKeys])
 
   if (!ready || !projectId) {
     return (

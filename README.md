@@ -1,24 +1,24 @@
 # Gravity Frames Studio
 
-An Electron video editor that combines Antigravity CLI agent chat, HyperFrames HTML motion scenes, and the timeline/preview foundation from Rhymx AI Video Editor.
+An Electron motion-design studio that combines Antigravity agent chat with HyperFrames HTML animation generation, preview, composition, and export.
 
 ## What is implemented
 
-- **Scene Lab** — Antigravity chat on the left and a focused live HTML preview on the right.
-- **Timeline Editor** — imported media, multi-track timeline, preview, properties, and Antigravity chat in one workspace.
-- **Live preview controls** — preview generated HTML before rendering, scrub or frame-step it, and switch preview resolution below the canvas.
+- **Chat workspace** — describe an animation, attach local reference images, and generate a self-contained HyperFrames composition.
+- **Studio workspace** — inspect and refine the generated master composition in HyperFrames Studio.
+- **Live preview controls** — preview generated HTML, scrub or frame-step it, and switch preview resolution below the canvas.
 - **Account visibility** — the Antigravity panel shows the authenticated email and plan exposed by the CLI response.
-- Import video, image, and audio files; drag visual media to tracks or add audio to the audio lane.
-- Add a blank five-second scene at the playhead and turn it into seekable motion through chat.
 - Live HyperFrames preview through `@hyperframes/player`.
-- Render a generated scene with the HyperFrames CLI and attach its MP4 to the existing Remotion export pipeline.
-- Custom playback controller with scrubbing, frame steps, five-second jumps, timecode, and keyboard shortcuts.
+- Append generated child animations to a reusable master composition.
+- Export generated animations through the HyperFrames and Remotion render pipeline.
 - Autosaved project state and per-scene agent conversation history.
+
+The app does not search for, download, or automatically match third-party footage. Its creation workflow is dedicated to generated animation.
 
 ## Stack
 
-- Electron 30, React 18, TypeScript, Vite, Tailwind CSS, Zustand
-- Rhymx timeline, inspector, media bin, Remotion preview/export, FFmpeg services
+- Electron, React 18, TypeScript, Vite, Tailwind CSS, Zustand
+- Remotion preview/export and local rendering services
 - `@hyperframes/player` and `hyperframes` CLI 0.7.108+
 - Antigravity CLI 1.1.7+ headless structured output
 
@@ -37,7 +37,7 @@ Install Antigravity CLI on Windows with the official installer:
 irm https://antigravity.google/cli/install.ps1 | iex
 ```
 
-In the app, click **Connect** in the Antigravity panel. The official CLI opens in its own terminal and launches Google Sign-In. Finish sign-in there, return to the app, select a scene, and send a motion request.
+In the app, click **Connect** in the Antigravity panel. The official CLI opens in its own terminal and launches Google Sign-In. Finish sign-in there, return to the app, and send a motion request.
 
 The app does not receive, copy, or persist OAuth tokens. Antigravity CLI owns authentication in Windows Credential Manager and applies the signed-in account's plan quota/AI credits. The app only starts documented headless CLI turns and reads their structured output.
 
@@ -52,12 +52,12 @@ npm run dev:web         # Browser-only layout preview with a local Electron API 
 
 ## Integration flow
 
-1. A selected timeline scene and the user's request are converted to a constrained HyperFrames authoring prompt.
+1. The user's request and optional local reference images are converted to a constrained HyperFrames authoring prompt.
 2. Electron invokes `agy --print --output-format stream-json`; account auth and quota remain inside Antigravity CLI.
-3. The complete HTML composition returned by the agent is stored with that scene.
-4. `@hyperframes/player` previews it in a unique-origin sandbox driven by the editor's playback controls.
-5. **Render MP4** calls the bundled HyperFrames CLI, writes the scene composition under the project's asset directory, and attaches the rendered clip to the timeline.
-6. The existing Remotion/FFmpeg export pipeline produces the final edit.
+3. The complete HTML child composition returned by the agent is stored in the animation project.
+4. `@hyperframes/player` previews it in a unique-origin sandbox.
+5. The child composition is appended to the master composition in HyperFrames Studio.
+6. The HyperFrames/Remotion pipeline renders the generated animation.
 
 ## Security boundaries
 
@@ -72,4 +72,3 @@ npm run dev:web         # Browser-only layout preview with a local Electron API 
 
 - [HyperFrames](https://github.com/heygen-com/hyperframes)
 - [Antigravity CLI](https://github.com/google-antigravity/antigravity-cli)
-- [Rhymx AI Video Editor](https://github.com/LeeHaii/RhymxAIVideoEditor)

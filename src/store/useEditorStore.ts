@@ -131,10 +131,7 @@ const normalizeScenes = (scenes: SceneSegment[], fallbackTrackId: string): Scene
           sourceDurationSec: scene.media.sourceDurationSec ?? scene.media.durationSec,
         }
       : null
-    const isImage =
-      media?.type === 'local_image' ||
-      media?.type === 'google_image' ||
-      media?.type === 'duckduckgo_image'
+    const isImage = media?.type === 'local_image'
     const maximumDuration =
       media && !isImage && media.sourceDurationSec
         ? Math.max(1 / 30, media.sourceDurationSec - (media.sourceStartSec ?? 0))
@@ -151,27 +148,6 @@ const normalizeScenes = (scenes: SceneSegment[], fallbackTrackId: string): Scene
       opacity: scene.opacity ?? 1,
     }
   }))
-
-export function extendVisualScenesAcrossSpeechGaps(
-  scenes: SceneSegment[],
-  timelineDurationSec: number,
-  mainTrackId = scenes[0]?.trackId || 'track_main'
-) {
-  const output = scenes.map((scene) => ({ ...scene }))
-  const mainScenes = output
-    .filter((scene) => (scene.trackId || 'track_main') === mainTrackId)
-    .sort((first, second) => first.startTimeSec - second.startTimeSec)
-  for (let index = 0; index < mainScenes.length; index += 1) {
-    const scene = mainScenes[index]
-    const nextScene = mainScenes[index + 1]
-    const fillUntil = nextScene?.startTimeSec ?? timelineDurationSec
-    if (fillUntil > scene.endTimeSec + COLLISION_EPSILON) {
-      scene.endTimeSec = fillUntil
-      scene.durationSec = fillUntil - scene.startTimeSec
-    }
-  }
-  return output
-}
 
 const normalizeAudioClips = (clips?: TimelineAudioClip[]): TimelineAudioClip[] =>
   resolveAudioOverlaps((clips || []).map((clip) => {
@@ -223,20 +199,6 @@ interface EditorStore {
   activeSubtitleId: string | null
   currentTimeSec: number
   isPlaying: boolean
-  apiKeys: {
-    groq: string
-    pexels: string
-    youtube: string
-  }
-  isProcessingAudio: boolean
-  processingError: string | null
-  processingStage: 'transcribing' | 'matching-stock' | 'saving'
-  processingProgress: {
-    completed: number
-    total: number
-    matched: number
-    message?: string
-  }
   editorNotice: string | null
   exportProgress: number | null
   seekTargetSec: number
@@ -247,12 +209,10 @@ interface EditorStore {
   future: HistorySnapshot[]
 
   setScreen: (screen: AppScreen) => void
-  beginProject: (name: string, audioFile: { path: string; duration: number }) => void
   loadProject: (project: ProjectDocument) => void
   closeProject: () => void
   setProjectName: (name: string) => void
   setAudioFile: (file: { path: string; duration: number } | null) => void
-  setScenes: (scenes: SceneSegment[], subtitleTimingScenes?: SceneSegment[]) => void
   updateScene: (id: string, updates: Partial<SceneSegment>) => void
   splitScene: (id: string, atTimeSec: number) => void
   trimScene: (
@@ -279,22 +239,6 @@ interface EditorStore {
   requestSeek: (time: number) => void
   requestPlayback: (command?: 'play' | 'pause' | 'toggle') => void
   setIsPlaying: (playing: boolean) => void
-  setApiKeys: (keys: {
-    groq?: string
-    pexels?: string
-    youtube?: string
-  }) => void
-  setIsProcessingAudio: (processing: boolean) => void
-  setProcessingError: (error: string | null) => void
-  setProcessingStage: (
-    stage: 'transcribing' | 'matching-stock' | 'saving'
-  ) => void
-  setProcessingProgress: (progress: {
-    completed: number
-    total: number
-    matched: number
-    message?: string
-  }) => void
   setEditorNotice: (notice: string | null) => void
   setExportProgress: (progress: number | null) => void
   addMediaAssets: (assets: LibraryAsset[]) => void
@@ -321,14 +265,6 @@ interface EditorStore {
 }
 
 const markUpdated = () => new Date().toISOString()
-
-const subtitlesFromScenes = (scenes: SceneSegment[]): SubtitleSegment[] =>
-  scenes.map((scene, index) => ({
-    id: `subtitle_${index + 1}_${scene.id}`,
-    startTimeSec: scene.startTimeSec,
-    endTimeSec: scene.endTimeSec,
-    text: scene.transcriptText,
-  }))
 
 const capture = (state: EditorStore): HistorySnapshot => ({
   audioFile: state.audioFile,
@@ -387,15 +323,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
   activeSubtitleId: null,
   currentTimeSec: 0,
   isPlaying: false,
-  apiKeys: {
-    groq: '',
-    pexels: '',
-    youtube: '',
-  },
-  isProcessingAudio: false,
-  processingError: null,
-  processingStage: 'transcribing',
-  processingProgress: { completed: 0, total: 0, matched: 0 },
   editorNotice: null,
   exportProgress: null,
   seekTargetSec: 0,
@@ -406,57 +333,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
   future: [],
 
   setScreen: (screen) => set({ screen }),
-  beginProject: (name, audioFile) => {
-    const now = markUpdated()
-    set({
-      screen: 'transcribing',
-      projectId: crypto.randomUUID(),
-      projectName: name.trim() || 'Untitled project',
-      projectCreatedAt: now,
-      projectUpdatedAt: now,
-      audioFile,
-      scenes: [],
-      videoTracks: defaultVideoTracks(),
-      voiceTrackSettings: defaultTrackSettings(),
-      audioTrackSettings: defaultTrackSettings(),
-      subtitles: [],
-      mediaLibrary: [],
-      audioClips: [],
-      subtitleSettings: defaultSubtitleSettings,
-      agentChat: [],
-      antigravityConversationId: null,
-      antigravityModel:
-        (typeof window !== 'undefined' &&
-          localStorage.getItem('hyperframes:antigravityModel')) ||
-        'Gemini 3.7 Flash (High)',
-      activeSceneId: null,
-      activeAudioClipId: null,
-      activeSubtitleId: null,
-      currentTimeSec: 0,
-      isProcessingAudio: true,
-      processingError: null,
-      processingStage: 'transcribing',
-      processingProgress: { completed: 0, total: 0, matched: 0 },
-      editorNotice: null,
-      history: [],
-      future: [],
-    })
-  },
   loadProject: (project) => {
     const videoTracks = normalizeVideoTracks(project.videoTracks)
-    const normalizedScenes = normalizeScenes(project.scenes, videoTracks[0].id)
-    const scenes = project.visualGapsFilled
-      ? normalizedScenes
-      : extendVisualScenesAcrossSpeechGaps(
-          normalizedScenes,
-          project.audioFile?.duration ||
-            normalizedScenes.reduce(
-              (maximum, scene) => Math.max(maximum, scene.endTimeSec),
-              0
-            ),
-          videoTracks[0].id
-        )
-    const subtitles = project.subtitles?.length ? project.subtitles : subtitlesFromScenes(scenes)
+    const scenes = normalizeScenes(project.scenes, videoTracks[0].id)
+    const subtitles = project.subtitles || []
     set({
       screen: 'editor',
       projectId: project.id,
@@ -490,10 +370,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
       activeSubtitleId: subtitles[0]?.id || null,
       currentTimeSec: 0,
       isPlaying: false,
-      processingError: null,
-      editorNotice: project.timingRepair
-        ? `Subtitle timing was repaired from ${project.timingRepair.previousTimelineDuration.toFixed(1)}s to match the ${project.timingRepair.actualAudioDuration.toFixed(1)}s voiceover.`
-        : null,
+      editorNotice: null,
       history: [],
       future: [],
     })
@@ -524,9 +401,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
       activeSubtitleId: null,
       currentTimeSec: 0,
       isPlaying: false,
-      processingError: null,
-      processingStage: 'transcribing',
-      processingProgress: { completed: 0, total: 0, matched: 0 },
       editorNotice: null,
       history: [],
       future: [],
@@ -534,32 +408,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
   setProjectName: (projectName) => set({ projectName, projectUpdatedAt: markUpdated() }),
   setAudioFile: (audioFile) =>
     set((state) => historyChange(state, { audioFile })),
-  setScenes: (scenes, subtitleTimingScenes) =>
-    set((state) => {
-      const videoTracks = state.videoTracks.length ? state.videoTracks : defaultVideoTracks()
-      const normalizedScenes = normalizeScenes(scenes, videoTracks[0].id)
-      const normalizedSubtitleTimingScenes = subtitleTimingScenes
-        ? normalizeScenes(subtitleTimingScenes, videoTracks[0].id)
-        : normalizedScenes
-      const duration = normalizedScenes.reduce(
-        (max, scene) => Math.max(max, scene.endTimeSec),
-        0
-      )
-      const subtitles = subtitlesFromScenes(normalizedSubtitleTimingScenes)
-      return historyChange(state, {
-        scenes: normalizedScenes,
-        videoTracks,
-        subtitles,
-        audioFile: state.audioFile
-          ? {
-              ...state.audioFile,
-              duration: state.audioFile.duration > 0 ? state.audioFile.duration : duration,
-            }
-          : null,
-        activeSceneId: normalizedScenes[0]?.id || null,
-        activeSubtitleId: subtitles[0]?.id || null,
-      })
-    }),
   updateScene: (id, updates) =>
     set((state) => {
       const current = state.scenes.find((scene) => scene.id === id)
@@ -651,9 +499,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
         transcriptText: words.slice(wordSplit).join(' ') || scene.transcriptText,
         media:
           scene.media &&
-          scene.media.type !== 'local_image' &&
-          scene.media.type !== 'google_image' &&
-          scene.media.type !== 'duckduckgo_image'
+          scene.media.type !== 'local_image'
             ? {
                 ...scene.media,
                 sourceStartSec:
@@ -802,27 +648,17 @@ export const useEditorStore = create<EditorStore>((set) => ({
         endTimeSec: start + durationSec,
         durationSec,
         transcriptText: asset.name,
-        keywords: [],
         media: {
           id: asset.id,
-          type:
-            asset.origin === 'youtube'
-              ? 'youtube_clip'
-              : asset.kind === 'video'
-                ? 'local_video'
-                : 'local_image',
+          type: asset.kind === 'video' ? 'local_video' : 'local_image',
           kind: asset.kind,
           sourceUrl: asset.path,
-          thumbnailUrl: asset.thumbnailUrl || asset.path,
+          thumbnailUrl: asset.path,
           title: asset.name,
           sourceStartSec: 0,
           sourceDurationSec: asset.durationSec,
-          providerUrl: asset.providerUrl,
-          providerStartSec: asset.providerStartSec,
           imageFit: 'cover',
           enableKenBurnsEffect: asset.kind === 'image',
-          missing: asset.missing,
-          missingReason: asset.missingReason,
         },
         trackId,
         volume: 1,
@@ -891,7 +727,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
         endTimeSec: startTimeSec + durationSec,
         durationSec,
         transcriptText: 'Blank motion scene',
-        keywords: [],
         media: null,
         trackId,
         volume: 1,
@@ -984,11 +819,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
       playbackVersion: state.playbackVersion + 1,
     })),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
-  setApiKeys: (keys) => set((state) => ({ apiKeys: { ...state.apiKeys, ...keys } })),
-  setIsProcessingAudio: (isProcessingAudio) => set({ isProcessingAudio }),
-  setProcessingError: (processingError) => set({ processingError }),
-  setProcessingStage: (processingStage) => set({ processingStage }),
-  setProcessingProgress: (processingProgress) => set({ processingProgress }),
   setEditorNotice: (editorNotice) => set({ editorNotice }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
   addMediaAssets: (assets) =>
@@ -1014,10 +844,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
             sourceStartSec: media.sourceStartSec ?? 0,
             sourceDurationSec: media.sourceDurationSec ?? media.durationSec,
           }
-          const isImage =
-            normalizedMedia.type === 'local_image' ||
-            normalizedMedia.type === 'google_image' ||
-            normalizedMedia.type === 'duckduckgo_image'
+          const isImage = normalizedMedia.type === 'local_image'
           const maximumDuration =
             !isImage && normalizedMedia.sourceDurationSec
               ? Math.max(

@@ -323,10 +323,7 @@ export default function Timeline() {
     const originalEnd = scene.endTimeSec
     const originalSourceStart = scene.media?.sourceStartSec ?? 0
     const sourceDuration = scene.media?.sourceDurationSec
-    const isStillImage =
-      scene.media?.type === 'local_image' ||
-      scene.media?.type === 'google_image' ||
-      scene.media?.type === 'duckduckgo_image'
+    const isStillImage = scene.media?.type === 'local_image'
     const hasSourceCap = Boolean(scene.media && !isStillImage && sourceDuration)
     const candidates = snapCandidates.filter(
       (candidate) =>

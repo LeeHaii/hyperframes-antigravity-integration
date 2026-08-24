@@ -47,15 +47,6 @@ export async function exportVideo(
   if (cancelCurrentRender) {
     throw new Error('Another export is already running.')
   }
-  const missingYouTubeScene = request.scenes.find(
-    (scene) => scene.media?.type === 'youtube_clip' && scene.media.missing
-  )
-  if (missingYouTubeScene) {
-    throw new Error(
-      `YouTube clip "${missingYouTubeScene.media?.title || missingYouTubeScene.id}" is missing. Download it again before exporting.`
-    )
-  }
-
   const { cancel, cancelSignal } = makeCancelSignal()
   cancelCurrentRender = cancel
   let assetServer: LocalAssetServer | null = null

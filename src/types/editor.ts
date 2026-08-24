@@ -1,4 +1,4 @@
-export type AppScreen = 'projects' | 'new-project' | 'transcribing' | 'editor'
+export type AppScreen = 'projects' | 'new-project' | 'editor'
 
 export type WorkspaceMode = 'chat' | 'studio'
 
@@ -32,13 +32,7 @@ export type MediaKind = 'video' | 'image' | 'music' | 'sfx'
 
 export interface MediaAsset {
   id: string
-  type:
-    | 'pexels_video'
-    | 'youtube_clip'
-    | 'google_image'
-    | 'duckduckgo_image'
-    | 'local_video'
-    | 'local_image'
+  type: 'local_video' | 'local_image'
   kind?: MediaKind
   sourceUrl: string
   thumbnailUrl: string
@@ -46,14 +40,8 @@ export interface MediaAsset {
   durationSec?: number
   sourceStartSec?: number
   sourceDurationSec?: number
-  providerUrl?: string
-  creatorName?: string
-  creatorUrl?: string
-  providerStartSec?: number
   imageFit?: 'cover' | 'contain'
   enableKenBurnsEffect?: boolean
-  missing?: boolean
-  missingReason?: string
 }
 
 export interface LibraryAsset {
@@ -62,12 +50,6 @@ export interface LibraryAsset {
   path: string
   kind: MediaKind
   durationSec?: number
-  origin?: 'imported' | 'youtube'
-  thumbnailUrl?: string
-  providerUrl?: string
-  providerStartSec?: number
-  missing?: boolean
-  missingReason?: string
 }
 
 export interface TimelineAudioClip {
@@ -122,7 +104,6 @@ export interface SceneSegment {
   endTimeSec: number
   durationSec: number
   transcriptText: string
-  keywords: string[]
   media: MediaAsset | null
   trackId: string
   volume: number
@@ -150,10 +131,6 @@ export interface ProjectDocument {
   agentChat?: AgentChatMessage[]
   antigravityConversationId?: string
   antigravityModel?: string
-  timingRepair?: {
-    previousTimelineDuration: number
-    actualAudioDuration: number
-  }
 }
 
 export interface ProjectSummary {
@@ -173,31 +150,8 @@ export interface AppSettings {
   workingDirectory: string
   studioProjectsDirectory: string
   defaultStudioProjectsDirectory: string
-  autoStockEnabled: boolean
   cacheSizeBytes: number
   workingFilesSizeBytes: number
-}
-
-export interface PexelsAutoMatchProgress {
-  completed: number
-  total: number
-  matched: number
-  sceneId?: string
-  query?: string
-}
-
-export interface TranscriptionProgress {
-  stage: 'preparing' | 'transcribing' | 'keywords'
-  completed: number
-  total: number
-  message: string
-}
-
-export interface PexelsAutoMatchResult {
-  scenes: SceneSegment[]
-  matchedCount: number
-  unmatchedCount: number
-  warnings: string[]
 }
 
 export interface ImportedFile {
@@ -265,22 +219,6 @@ export interface HyperframesStudioAppendResult {
   compositionCount: number
   totalDurationSec: number
   clipDurationSec: number
-}
-
-export interface ImageSearchResult {
-  id: string
-  sourceUrl: string
-  thumbnailUrl: string
-  title: string
-  source: 'duckduckgo' | 'pexels' | 'wikimedia'
-}
-
-export interface YouTubeSearchResult {
-  id: string
-  title: string
-  channelTitle: string
-  thumbnailUrl: string
-  url: string
 }
 
 export type ExportEncoder = 'cpu' | 'nvenc'
@@ -370,20 +308,8 @@ export interface ElectronAPI {
     projectId: string,
     image: { name: string; mimeType: string; data: ArrayBuffer }
   ) => Promise<ChatReferenceImage>
-  openAudioFile: () => Promise<{ path: string; duration: number } | null>
   openMediaFiles: () => Promise<ImportedFile[]>
   getMediaDuration: (filePath: string) => Promise<number | null>
-  transcribeAudio: (filePath: string, apiKey: string) => Promise<SceneSegment[]>
-  onTranscriptionProgress: (
-    callback: (progress: TranscriptionProgress) => void
-  ) => void
-  autoMatchPexelsVideos: (
-    scenes: SceneSegment[],
-    apiKey: string
-  ) => Promise<PexelsAutoMatchResult>
-  onPexelsAutoMatchProgress: (
-    callback: (progress: PexelsAutoMatchProgress) => void
-  ) => void
   listProjects: () => Promise<ProjectSummary[]>
   loadProject: (projectId: string) => Promise<ProjectDocument>
   saveProject: (project: ProjectDocument) => Promise<void>
@@ -398,18 +324,7 @@ export interface ElectronAPI {
   chooseStudioProjectsDirectory: () => Promise<AppSettings | null>
   resetStudioProjectsDirectory: () => Promise<AppSettings>
   openStudioProjectsDirectory: () => Promise<boolean>
-  setAutoStockEnabled: (enabled: boolean) => Promise<AppSettings>
   clearCache: () => Promise<AppSettings>
-  trimYouTube: (
-    url: string,
-    startTime: number,
-    endTime: number,
-    projectId: string
-  ) => Promise<string>
-  onYouTubeTrimProgress: (callback: (progress: number) => void) => void
-  searchImages: (query: string, pexelsKey?: string) => Promise<ImageSearchResult[]>
-  searchDuckDuckGoImages: (query: string) => Promise<ImageSearchResult[]>
-  searchYouTube: (query: string, apiKey: string) => Promise<YouTubeSearchResult[]>
   getDefaultExportPath: (defaultName: string) => Promise<string>
   chooseExportPath: (defaultName: string) => Promise<string | null>
   getEncoderCapabilities: () => Promise<EncoderCapabilities>
@@ -422,12 +337,6 @@ export interface ElectronAPI {
   onBatchExportProgress: (
     callback: (progress: BatchExportProgress) => void
   ) => void
-  getPexelsKey: () => Promise<string | null>
-  setPexelsKey: (key: string) => Promise<void>
-  getGroqKey: () => Promise<string | null>
-  setGroqKey: (key: string) => Promise<void>
-  getYouTubeKey: () => Promise<string | null>
-  setYouTubeKey: (key: string) => Promise<void>
 }
 
 declare global {

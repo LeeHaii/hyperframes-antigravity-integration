@@ -3,7 +3,6 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  safeStorage,
   session,
   shell,
 } from 'electron'
@@ -11,14 +10,8 @@ import { createReadStream } from 'node:fs'
 import { createServer, Server } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import path from 'path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { transcribeAudio } from './services/groq'
-import { trimYouTube } from './services/sidecar'
-import { searchDuckDuckGoImages, searchImages } from './services/imageSearch'
-import { searchYouTube } from './services/youtubeSearch'
+import { fileURLToPath } from 'node:url'
 import { getMediaDuration } from './services/mediaMetadata'
-import { autoMatchPexelsVideos } from './services/pexelsAutoMatch'
-import { repairProjectTranscriptTiming } from './services/transcriptTiming'
 import {
   registerLocalMediaProtocol,
   registerLocalMediaScheme,
@@ -79,7 +72,7 @@ async function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: file: rhymx-media: https:; media-src 'self' data: blob: file: rhymx-media: https:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-src 'self' blob: data: file: rhymx-media: http://localhost:* http://127.0.0.1:* https://www.youtube.com https://www.youtube-nocookie.com;",
+          "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: file: rhymx-media: https:; media-src 'self' data: blob: file: rhymx-media: https:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; frame-src 'self' blob: data: file: rhymx-media: http://localhost:* http://127.0.0.1:*;",
         ]
       }
     })
@@ -404,36 +397,9 @@ ipcMain.handle(
   }
 )
 
-ipcMain.handle('open-audio-file', async () => {
-  if (!mainWindow) return null
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'webm'] }]
-  })
-  if (result.canceled || result.filePaths.length === 0) return null
-  
-  const filePath = result.filePaths[0]
-  return { path: filePath, duration: (await getMediaDuration(filePath)) || 0 }
-})
-
 ipcMain.handle('get-media-duration', async (_, filePath: string) => {
   return await getMediaDuration(filePath)
 })
-
-ipcMain.handle('transcribe-audio', async (_, filePath: string, apiKey: string) => {
-  return await transcribeAudio(filePath, apiKey, (progress) => {
-    mainWindow?.webContents.send('transcription-progress', progress)
-  }, path.join(await getRenderWorkingDirectory(), 'temp'))
-})
-
-ipcMain.handle(
-  'auto-match-pexels-videos',
-  async (_, scenes: ProjectDocument['scenes'], apiKey: string) => {
-    return await autoMatchPexelsVideos(scenes, apiKey, (progress) => {
-      mainWindow?.webContents.send('pexels-auto-match-progress', progress)
-    })
-  }
-)
 
 ipcMain.handle('open-media-files', async () => {
   if (!mainWindow) return []
@@ -474,7 +440,6 @@ type PersistedPreferences = {
   projectsDirectory?: string
   renderDirectory?: string
   studioProjectsDirectory?: string
-  autoStockEnabled?: boolean
 }
 
 let preferencesCache: PersistedPreferences | null = null
@@ -548,13 +513,6 @@ async function getProjectPath(projectId: string) {
   return path.join(await getProjectsDirectory(), `${projectId}.json`)
 }
 
-async function getProjectYouTubeDirectory(projectId: string) {
-  if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
-    throw new Error('Invalid project id.')
-  }
-  return path.join(await getRenderWorkingDirectory(), 'clips', projectId, 'youtube')
-}
-
 function cleanProjectName(name: string) {
   const cleaned = String(name || '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -620,7 +578,6 @@ async function directorySize(directory: string): Promise<number> {
 }
 
 async function appSettings(): Promise<AppSettings> {
-  const preferences = await getPreferences()
   const renderDirectory = await getRenderDirectory()
   const workingDirectory = await getRenderWorkingDirectory()
   const defaultStudioProjectsDirectory = await getDefaultStudioProjectsDirectory()
@@ -635,7 +592,6 @@ async function appSettings(): Promise<AppSettings> {
     workingDirectory,
     studioProjectsDirectory: await getStudioProjectsDirectory(),
     defaultStudioProjectsDirectory,
-    autoStockEnabled: preferences.autoStockEnabled ?? true,
     cacheSizeBytes,
     workingFilesSizeBytes: await directorySize(workingDirectory),
   }
@@ -676,16 +632,6 @@ ipcMain.handle('list-projects', async () => {
 async function loadProjectDocument(projectId: string) {
   const contents = await fs.readFile(await getProjectPath(projectId), 'utf8')
   const project = JSON.parse(contents) as ProjectDocument
-  const repairedYouTubeMedia = await repairYouTubeProjectMedia(project)
-  if (project.audioFile?.path) {
-    const audioPath = project.audioFile.path.startsWith('file:')
-      ? fileURLToPath(project.audioFile.path)
-      : project.audioFile.path
-    const actualAudioDuration = await getMediaDuration(audioPath)
-    if (actualAudioDuration) {
-      repairProjectTranscriptTiming(project, actualAudioDuration)
-    }
-  }
   await Promise.all([
     ...(project.mediaLibrary || []).map(async (asset) => {
       if (asset.kind === 'image' || asset.durationSec) return
@@ -702,8 +648,6 @@ async function loadProjectDocument(projectId: string) {
         !media ||
         media.sourceDurationSec ||
         media.type === 'local_image' ||
-        media.type === 'google_image' ||
-        media.type === 'duckduckgo_image' ||
         /^(https?:|data:|blob:)/.test(media.sourceUrl)
       ) {
         return
@@ -715,145 +659,7 @@ async function loadProjectDocument(projectId: string) {
       media.sourceStartSec = media.sourceStartSec ?? 0
     }),
   ])
-  if (repairedYouTubeMedia) {
-    project.updatedAt = new Date().toISOString()
-    await writeProjectDocument(project)
-  }
   return project
-}
-
-async function repairYouTubeProjectMedia(project: ProjectDocument) {
-  const youtubeScenes = (project.scenes || []).filter(
-    (scene) => scene.media?.type === 'youtube_clip'
-  )
-  if (youtubeScenes.length === 0) return false
-
-  const library = project.mediaLibrary || []
-  let changed = !project.mediaLibrary
-  project.mediaLibrary = library
-  const durableDirectory = path.resolve(
-    await getProjectYouTubeDirectory(project.id)
-  )
-
-  for (const scene of youtubeScenes) {
-    const media = scene.media!
-    const beforeMedia = JSON.stringify(media)
-    const originalSource = media.sourceUrl
-    const localPath = persistedLocalPath(originalSource)
-    let sourceUrl = originalSource
-    let durationSec = media.sourceDurationSec ?? media.durationSec
-    let missing = true
-    let missingReason =
-      'The downloaded YouTube clip file is missing. Download it again from the YouTube search tab.'
-
-    if (localPath && (await pathExists(localPath))) {
-      missing = false
-      missingReason = ''
-      let durablePath = path.resolve(localPath)
-      if (
-        durablePath !== durableDirectory &&
-        !durablePath.startsWith(`${durableDirectory}${path.sep}`)
-      ) {
-        await fs.mkdir(durableDirectory, { recursive: true })
-        const safeId =
-          String(media.id || scene.id)
-            .replace(/[^a-zA-Z0-9_-]/g, '_')
-            .slice(0, 100) || randomUUID()
-        const extension = path.extname(durablePath) || '.mp4'
-        const destination = path.join(durableDirectory, `${safeId}${extension}`)
-        try {
-          if (!(await pathExists(destination))) {
-            await fs.copyFile(durablePath, destination)
-          }
-          durablePath = destination
-        } catch (error) {
-          console.warn('Could not migrate a YouTube clip into project storage.', error)
-        }
-      }
-      sourceUrl = pathToFileURL(durablePath).toString()
-      durationSec = (await getMediaDuration(durablePath)) || durationSec
-    }
-
-    const providerUrl =
-      media.providerUrl || youtubeUrlFromThumbnail(media.thumbnailUrl)
-    Object.assign(media, {
-      sourceUrl,
-      sourceStartSec: media.sourceStartSec ?? 0,
-      sourceDurationSec: durationSec,
-      providerUrl,
-      missing,
-      missingReason: missing ? missingReason : undefined,
-    })
-    if (JSON.stringify(media) !== beforeMedia) changed = true
-
-    const existingAsset = library.find(
-      (asset) =>
-        asset.id === media.id ||
-        asset.path === originalSource ||
-        asset.path === sourceUrl
-    )
-    const libraryDetails = {
-      id: media.id || randomUUID(),
-      name: media.title || 'YouTube clip',
-      path: sourceUrl,
-      kind: 'video' as const,
-      durationSec,
-      origin: 'youtube' as const,
-      thumbnailUrl: media.thumbnailUrl,
-      providerUrl,
-      providerStartSec: media.providerStartSec,
-      missing,
-      missingReason: missing ? missingReason : undefined,
-    }
-    if (existingAsset) {
-      const beforeAsset = JSON.stringify(existingAsset)
-      Object.assign(existingAsset, libraryDetails)
-      if (JSON.stringify(existingAsset) !== beforeAsset) changed = true
-    } else {
-      library.push(libraryDetails)
-      changed = true
-    }
-  }
-
-  return changed
-}
-
-function persistedLocalPath(source: string) {
-  if (!source || /^(https?:|data:|blob:)/i.test(source)) return null
-  if (source.startsWith('rhymx-media:')) {
-    try {
-      const url = new URL(source)
-      const decoded = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
-      return path.isAbsolute(decoded) ? decoded : null
-    } catch {
-      return null
-    }
-  }
-  if (source.startsWith('file:')) {
-    try {
-      return fileURLToPath(source)
-    } catch {
-      const stripped = source.replace(/^file:\/\/+/i, '').replace(/^\/([a-zA-Z]:)/, '$1')
-      return path.isAbsolute(stripped) ? path.normalize(stripped) : null
-    }
-  }
-  return path.isAbsolute(source) ? path.normalize(source) : null
-}
-
-async function pathExists(filePath: string) {
-  try {
-    await fs.access(filePath)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function youtubeUrlFromThumbnail(thumbnailUrl: string) {
-  const videoId = /\/vi\/([^/?]+)/i.exec(thumbnailUrl || '')?.[1]
-  return videoId
-    ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`
-    : undefined
 }
 
 ipcMain.handle('load-project', async (_, projectId: string) => {
@@ -885,7 +691,6 @@ ipcMain.handle('duplicate-project', async (_, projectId: string) => {
     createdAt: now,
     updatedAt: now,
   }
-  delete duplicate.timingRepair
   await writeProjectDocument(duplicate)
   return duplicate.id
 })
@@ -973,11 +778,6 @@ ipcMain.handle('reset-render-directory', async () => {
   return await appSettings()
 })
 
-ipcMain.handle('set-auto-stock-enabled', async (_, enabled: boolean) => {
-  await savePreferences({ autoStockEnabled: Boolean(enabled) })
-  return await appSettings()
-})
-
 ipcMain.handle('clear-cache', async () => {
   await session.defaultSession.clearCache()
   const workingDirectory = path.resolve(await getRenderWorkingDirectory())
@@ -989,34 +789,6 @@ ipcMain.handle('clear-cache', async () => {
     }
   }
   return await appSettings()
-})
-
-ipcMain.handle('trim-youtube', async (
-  event,
-  url: string,
-  startTime: number,
-  endTime: number,
-  projectId: string
-) => {
-  return await trimYouTube(
-    url,
-    startTime,
-    endTime,
-    await getProjectYouTubeDirectory(projectId),
-    (progress) => event.sender.send('youtube-trim-progress', progress)
-  )
-})
-
-ipcMain.handle('search-images', async (_, query: string, pexelsKey?: string) => {
-  return await searchImages(query, pexelsKey)
-})
-
-ipcMain.handle('search-duckduckgo-images', async (_, query: string) => {
-  return await searchDuckDuckGoImages(query)
-})
-
-ipcMain.handle('search-youtube', async (_, query: string, apiKey: string) => {
-  return await searchYouTube(query, apiKey)
 })
 
 ipcMain.handle('choose-export-path', async (_, defaultName: string) => {
@@ -1207,40 +979,3 @@ ipcMain.handle('cancel-batch-export', () => {
   cancelActiveExport()
   return true
 })
-
-const configStore: Record<string, string> = {}
-const getSettingsPath = () => path.join(app.getPath('userData'), 'settings.json')
-
-async function getSecret(name: string) {
-  if (configStore[name]) return configStore[name]
-  if (!safeStorage.isEncryptionAvailable()) return null
-  try {
-    const settings = JSON.parse(await fs.readFile(getSettingsPath(), 'utf8')) as Record<string, string>
-    if (!settings[name]) return null
-    const value = safeStorage.decryptString(Buffer.from(settings[name], 'base64'))
-    configStore[name] = value
-    return value
-  } catch {
-    return null
-  }
-}
-
-async function setSecret(name: string, value: string) {
-  configStore[name] = value
-  if (!safeStorage.isEncryptionAvailable()) return
-  let settings: Record<string, string> = {}
-  try {
-    settings = JSON.parse(await fs.readFile(getSettingsPath(), 'utf8'))
-  } catch {
-    // The settings file is created on the first saved key.
-  }
-  settings[name] = safeStorage.encryptString(value).toString('base64')
-  await fs.writeFile(getSettingsPath(), JSON.stringify(settings, null, 2), 'utf8')
-}
-
-ipcMain.handle('get-pexels-key', () => getSecret('pexels'))
-ipcMain.handle('set-pexels-key', (_, key: string) => setSecret('pexels', key))
-ipcMain.handle('get-groq-key', () => getSecret('groq'))
-ipcMain.handle('set-groq-key', (_, key: string) => setSecret('groq', key))
-ipcMain.handle('get-youtube-key', () => getSecret('youtube'))
-ipcMain.handle('set-youtube-key', (_, key: string) => setSecret('youtube', key))

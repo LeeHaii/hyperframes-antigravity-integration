@@ -19,7 +19,6 @@ export function createAnimationProject(name = 'Untitled animation'): ProjectDocu
         endTimeSec: 5,
         durationSec: 5,
         transcriptText: 'Main composition',
-        keywords: [],
         media: null,
         trackId,
         volume: 1,

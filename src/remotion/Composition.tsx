@@ -163,9 +163,7 @@ const SceneContent: React.FC<{ scene: SceneSegment; trackMuted: boolean }> = Rea
   let transform = 'none'
   if (
     media &&
-    (media.type === 'google_image' ||
-      media.type === 'duckduckgo_image' ||
-      media.type === 'local_image') &&
+    media.type === 'local_image' &&
     media.enableKenBurnsEffect
   ) {
     const durationFrames = Math.round(scene.durationSec * fps)
@@ -175,10 +173,7 @@ const SceneContent: React.FC<{ scene: SceneSegment; trackMuted: boolean }> = Rea
     transform = `scale(${scale})`
   }
 
-  const isVideo =
-    media?.type === 'pexels_video' ||
-    media?.type === 'youtube_clip' ||
-    media?.type === 'local_video'
+  const isVideo = media?.type === 'local_video'
 
   return (
     <AbsoluteFill
@@ -189,24 +184,7 @@ const SceneContent: React.FC<{ scene: SceneSegment; trackMuted: boolean }> = Rea
         transformOrigin: 'center center',
       }}
     >
-      {media?.missing ? (
-        <AbsoluteFill
-          style={{
-            background: 'radial-gradient(circle at 50% 35%, #301b22 0%, #090a0e 68%)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 48,
-            textAlign: 'center',
-          }}
-        >
-          <div style={{ color: '#fca5a5', fontSize: 30, fontWeight: 650 }}>
-            YouTube clip file is missing
-          </div>
-          <div style={{ color: '#8f6670', fontSize: 18, marginTop: 12 }}>
-            Download this clip again from the YouTube search tab
-          </div>
-        </AbsoluteFill>
-      ) : !media ? (
+      {!media ? (
         <AbsoluteFill
           style={{
             background: 'radial-gradient(circle at 50% 30%, #20243a 0%, #090a0e 62%)',

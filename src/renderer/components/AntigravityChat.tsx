@@ -92,7 +92,7 @@ export function seedComposition(scene: SceneSegment, requestedCompositionId?: st
     requestedCompositionId || `scene-${scene.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const duration = Math.max(0.1, scene.durationSec)
   const mediaUrl = scene.media?.sourceUrl ? localMediaUrl(scene.media.sourceUrl) : ''
-  const isVideo = scene.media?.type === 'local_video' || scene.media?.type === 'youtube_clip' || scene.media?.type === 'pexels_video'
+  const isVideo = scene.media?.type === 'local_video'
   const media = mediaUrl
     ? isVideo
       ? `<video id="${compositionId}-media" data-hf-id="hf-media" class="clip media" data-start="0" data-duration="${duration}" data-track-index="0" src="${escapeHtml(mediaUrl)}" muted playsinline></video>`

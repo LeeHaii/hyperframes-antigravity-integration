@@ -1,21 +1,19 @@
 import React, { DragEvent, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  AlertTriangle,
   FileAudio,
   Film,
   Music2,
   Plus,
   Trash2,
   Upload,
-  Youtube,
 } from 'lucide-react'
 import { ImportedFile, LibraryAsset, MediaKind } from '../../types/editor'
 import { useEditorStore } from '../../store/useEditorStore'
 import { localMediaUrl } from '../services/localMedia'
 
 type FileWithPath = File & { path?: string }
-type MediaFilter = 'all' | 'video' | 'image' | 'audio' | 'youtube'
+type MediaFilter = 'all' | 'video' | 'image' | 'audio'
 
 const videoExtensions = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi'])
 const imageExtensions = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
@@ -85,22 +83,12 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
 
   const visibleAssets = mediaLibrary.filter((asset) => {
     if (filter === 'all') return true
-    if (filter === 'youtube') return asset.origin === 'youtube'
     if (filter === 'audio') return asset.kind === 'music' || asset.kind === 'sfx'
-    if (filter === 'video') {
-      return asset.kind === 'video' && asset.origin !== 'youtube'
-    }
+    if (filter === 'video') return asset.kind === 'video'
     return asset.kind === filter
   })
 
   const placeVisual = (asset: LibraryAsset) => {
-    if (asset.missing) {
-      alert(
-        asset.missingReason ||
-          'This YouTube clip file is missing. Download the clip again.'
-      )
-      return
-    }
     if (!activeSceneId) {
       alert('Select a scene on the timeline first.')
       return
@@ -108,23 +96,15 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
     if (asset.kind !== 'image' && asset.kind !== 'video') return
     assignMediaToScene(activeSceneId, {
       id: asset.id,
-      type:
-        asset.origin === 'youtube'
-          ? 'youtube_clip'
-          : asset.kind === 'video'
-            ? 'local_video'
-            : 'local_image',
+      type: asset.kind === 'video' ? 'local_video' : 'local_image',
       kind: asset.kind,
       sourceUrl: asset.path,
-      thumbnailUrl: asset.thumbnailUrl || asset.path,
+      thumbnailUrl: asset.path,
       title: asset.name,
       sourceStartSec: 0,
       sourceDurationSec: asset.durationSec,
-      providerUrl: asset.providerUrl,
-      providerStartSec: asset.providerStartSec,
       imageFit: 'cover',
       enableKenBurnsEffect: asset.kind === 'image',
-      missing: false,
     })
   }
 
@@ -167,29 +147,11 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
               {item}
             </button>
           ))}
-          <button
-            onClick={() => setFilter('youtube')}
-            className={`shrink-0 rounded-md px-2 py-1.5 text-[10px] transition-colors ${
-              filter === 'youtube'
-                ? 'bg-red-500/15 text-red-300'
-                : 'text-slate-600 hover:text-slate-300'
-            }`}
-          >
-            YouTube clips
-          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-        {visibleAssets.length === 0 && filter === 'youtube' ? (
-          <div className="w-full h-32 rounded-xl border border-dashed border-white/10 flex flex-col items-center justify-center px-4 text-center text-slate-600">
-            <Youtube className="h-6 w-6 mb-2" />
-            <span className="text-[11px]">No downloaded YouTube clips yet</span>
-            <span className="mt-1 text-[9px]">
-              Clips downloaded in the Inspector will stay with this project.
-            </span>
-          </div>
-        ) : visibleAssets.length === 0 ? (
+        {visibleAssets.length === 0 ? (
           <button
             onClick={importFiles}
             className="w-full h-32 rounded-xl border border-dashed border-white/10 hover:border-violet-500/30 flex flex-col items-center justify-center text-slate-600 hover:text-slate-400 transition-colors"
@@ -202,28 +164,16 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
             {visibleAssets.map((asset) => (
               <div
                 key={asset.id}
-                draggable={!asset.missing}
+                draggable
                 onDragStart={(event) => {
-                  if (asset.missing) {
-                    event.preventDefault()
-                    return
-                  }
                   event.dataTransfer.effectAllowed = 'copy'
                   event.dataTransfer.setData(
                     'application/x-rhymx-media',
                     JSON.stringify(asset)
                   )
                 }}
-                className={`group rounded-lg border bg-black/20 overflow-hidden ${
-                  asset.missing
-                    ? 'border-red-500/20 cursor-not-allowed'
-                    : 'border-white/5 cursor-grab active:cursor-grabbing'
-                }`}
-                title={
-                  asset.missing
-                    ? asset.missingReason
-                    : 'Drag this media onto a timeline track'
-                }
+                className="group cursor-grab overflow-hidden rounded-lg border border-white/5 bg-black/20 active:cursor-grabbing"
+                title="Drag this media onto a timeline track"
               >
                 <button
                   onClick={() => {
@@ -236,13 +186,7 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
                       : 'Audio asset'
                   }
                 >
-                  {asset.origin === 'youtube' && asset.thumbnailUrl ? (
-                    <img
-                      src={asset.thumbnailUrl}
-                      className="w-full h-full object-cover"
-                      alt=""
-                    />
-                  ) : asset.kind === 'image' ? (
+                  {asset.kind === 'image' ? (
                     <img
                       src={localMediaUrl(asset.path)}
                       className="w-full h-full object-cover"
@@ -258,12 +202,6 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
                     <FileAudio className="h-6 w-6 text-amber-400" />
                   ) : (
                     <Music2 className="h-6 w-6 text-emerald-400" />
-                  )}
-                  {asset.missing && (
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-red-300">
-                      <AlertTriangle className="h-5 w-5" />
-                      <span className="mt-1 text-[8px] uppercase">File missing</span>
-                    </div>
                   )}
                 </button>
                 <div className="p-2">
@@ -285,12 +223,8 @@ export default function MediaBin({ width = 256 }: { width?: number }) {
                     </div>
                   )}
                   <div className="mt-1 flex items-center justify-between">
-                    <span
-                      className={`text-[9px] uppercase ${
-                        asset.origin === 'youtube' ? 'text-red-400/80' : 'text-slate-600'
-                      }`}
-                    >
-                      {asset.origin === 'youtube' ? 'YouTube' : asset.kind}
+                    <span className="text-[9px] uppercase text-slate-600">
+                      {asset.kind}
                     </span>
                     <button
                       onClick={() => removeMediaAsset(asset.id)}
