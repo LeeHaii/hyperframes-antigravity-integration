@@ -4,6 +4,7 @@ import {
   AppScreen,
   LibraryAsset,
   MediaAsset,
+  ProjectCapabilities,
   ProjectDocument,
   SceneSegment,
   SubtitleSegment,
@@ -194,6 +195,7 @@ interface EditorStore {
   agentChat: AgentChatMessage[]
   antigravityConversationId: string | null
   antigravityModel: string
+  capabilities: ProjectCapabilities
   activeSceneId: string | null
   activeAudioClipId: string | null
   activeSubtitleId: string | null
@@ -259,6 +261,7 @@ interface EditorStore {
   clearAgentChat: () => void
   setAntigravityConversationId: (id: string | null) => void
   setAntigravityModel: (model: string) => void
+  setProjectCapabilities: (capabilities: ProjectCapabilities) => void
   checkpointHistory: () => void
   undo: () => void
   redo: () => void
@@ -318,6 +321,12 @@ export const useEditorStore = create<EditorStore>((set) => ({
     (typeof window !== 'undefined' &&
       localStorage.getItem('hyperframes:antigravityModel')) ||
     'Gemini 3.7 Flash (High)',
+  capabilities: {
+    web_image_search: {
+      allowed: false,
+      reason: 'Web image search was not explicitly authorized by the user.',
+    },
+  },
   activeSceneId: null,
   activeAudioClipId: null,
   activeSubtitleId: null,
@@ -365,6 +374,12 @@ export const useEditorStore = create<EditorStore>((set) => ({
         (typeof window !== 'undefined' &&
           localStorage.getItem('hyperframes:antigravityModel')) ||
         'Gemini 3.7 Flash (High)',
+      capabilities: project.capabilities || {
+        web_image_search: {
+          allowed: false,
+          reason: 'Web image search was not explicitly authorized by the user.',
+        },
+      },
       activeSceneId: scenes[0]?.id || null,
       activeAudioClipId: null,
       activeSubtitleId: subtitles[0]?.id || null,
@@ -396,6 +411,12 @@ export const useEditorStore = create<EditorStore>((set) => ({
         (typeof window !== 'undefined' &&
           localStorage.getItem('hyperframes:antigravityModel')) ||
         'Gemini 3.7 Flash (High)',
+      capabilities: {
+        web_image_search: {
+          allowed: false,
+          reason: 'Web image search was not explicitly authorized by the user.',
+        },
+      },
       activeSceneId: null,
       activeAudioClipId: null,
       activeSubtitleId: null,
@@ -1065,6 +1086,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
     }
     set({ antigravityModel, projectUpdatedAt: markUpdated() })
   },
+  setProjectCapabilities: (capabilities) =>
+    set({ capabilities, projectUpdatedAt: markUpdated() }),
   checkpointHistory: () =>
     set((state) => ({
       history: [...state.history.slice(-49), capture(state)],
@@ -1117,6 +1140,7 @@ export function getProjectDocument(): ProjectDocument | null {
     agentChat: state.agentChat,
     antigravityConversationId: state.antigravityConversationId || undefined,
     antigravityModel: state.antigravityModel || undefined,
+    capabilities: state.capabilities,
     visualGapsFilled: true,
   }
 }

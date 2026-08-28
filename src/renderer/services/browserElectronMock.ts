@@ -42,6 +42,8 @@ if (!window.electronAPI) {
     runAntigravity: unavailable,
     runStudioAntigravity: unavailable,
     cancelAntigravity: async () => false,
+    searchWebImages: unavailable,
+    ingestWebImage: unavailable,
     onAntigravityStream: removeListener,
     renderHyperframesScene: unavailable,
     onHyperframesRenderProgress: removeListener,

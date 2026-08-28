@@ -12,8 +12,9 @@ An Electron motion-design studio that combines Antigravity agent chat with Hyper
 - Append generated child animations to a reusable master composition.
 - Export generated animations through the HyperFrames and Remotion render pipeline.
 - Autosaved project state and per-scene agent conversation history.
+- **Opt-in web images** — explicit requests can search attributed Wikimedia Commons candidates, freeze the selected original locally, and use it in a composition.
 
-The app does not search for, download, or automatically match third-party footage. Its creation workflow is dedicated to generated animation.
+The app never infers permission to search for images. Ordinary prompts keep web image search disabled, and third-party footage is never matched automatically.
 
 ## Stack
 
@@ -45,6 +46,7 @@ The app does not receive, copy, or persist OAuth tokens. Antigravity CLI owns au
 
 ```powershell
 npm run typecheck       # TypeScript validation
+npm run test:image-search-policy # Opt-in image-search policy tests
 npm run build:app       # Compile renderer, Electron main/preload, and Remotion bundle
 npm run build           # Package the desktop app
 npm run dev:web         # Browser-only layout preview with a local Electron API mock
@@ -52,12 +54,13 @@ npm run dev:web         # Browser-only layout preview with a local Electron API 
 
 ## Integration flow
 
-1. The user's request and optional local reference images are converted to a constrained HyperFrames authoring prompt.
-2. Electron invokes `agy --print --output-format stream-json`; account auth and quota remain inside Antigravity CLI.
-3. The complete HTML child composition returned by the agent is stored in the animation project.
-4. `@hyperframes/player` previews it in a unique-origin sandbox.
-5. The child composition is appended to the master composition in HyperFrames Studio.
-6. The HyperFrames/Remotion pipeline renders the generated animation.
+1. The user's request is normalized into project capabilities; web image search defaults to disabled and is enabled only by explicit wording.
+2. When authorized, the app retrieves multiple Wikimedia Commons candidates, lets the user choose one, validates the original, and freezes it under the Studio project's `.media/images/` directory with provenance in `.media/manifest.json`.
+3. Electron invokes `agy --print --output-format stream-json`; account auth and quota remain inside Antigravity CLI.
+4. The complete HTML child composition returned by the agent is stored in the animation project.
+5. `@hyperframes/player` previews it in a unique-origin sandbox.
+6. The child composition is appended to the master composition in HyperFrames Studio.
+7. The HyperFrames/Remotion pipeline renders the generated animation.
 
 ## Security boundaries
 
@@ -66,6 +69,7 @@ npm run dev:web         # Browser-only layout preview with a local Electron API 
 - OAuth credentials are never exposed to the renderer or saved in project files.
 - Generated HTML runs without `allow-same-origin`, so it cannot access the parent Electron bridge.
 - Project and scene identifiers are validated before filesystem paths are constructed.
+- Web-image downloads are HTTPS-only, host-allowlisted, size- and time-limited, MIME-sniffed, decoded, dimension-checked, and guarded again by the normalized project brief.
 - HyperFrames rendering converts the app-only local media protocol to file URLs only in the isolated composition directory.
 
 ## Upstream projects
