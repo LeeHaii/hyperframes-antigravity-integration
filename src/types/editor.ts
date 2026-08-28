@@ -9,6 +9,53 @@ export interface ChatReferenceImage {
   relativePath: string
 }
 
+export interface WebImageSearchCapability {
+  allowed: boolean
+  reason: string
+}
+
+export interface ProjectCapabilities {
+  web_image_search: WebImageSearchCapability
+}
+
+export interface WebImageSearchDecision extends WebImageSearchCapability {
+  explicit: boolean
+}
+
+export interface WebImageCandidate {
+  id: string
+  title: string
+  thumbnailPath: string
+  sourcePageUrl: string
+  width: number
+  height: number
+  mimeType: string
+  provider: 'wikimedia-commons'
+  author: string
+  license: string
+  attribution: string
+}
+
+export interface WebImageSearchResult {
+  searchId: string
+  query: string
+  candidates: WebImageCandidate[]
+}
+
+export interface WebImageAsset extends ChatReferenceImage {
+  projectRelativePath: string
+  sourcePageUrl: string
+  sourceImageUrl: string
+  width: number
+  height: number
+  mimeType: string
+  provider: 'wikimedia-commons'
+  author: string
+  license: string
+  attribution: string
+  sha256: string
+}
+
 export interface AgentChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -131,6 +178,7 @@ export interface ProjectDocument {
   agentChat?: AgentChatMessage[]
   antigravityConversationId?: string
   antigravityModel?: string
+  capabilities?: ProjectCapabilities
 }
 
 export interface ProjectSummary {
@@ -179,6 +227,26 @@ export interface AntigravityRunRequest {
   projectId: string
   conversationId?: string
   model?: string
+  userPrompt?: string
+  capabilities?: ProjectCapabilities
+}
+
+export interface SearchWebImagesRequest {
+  projectId: string
+  sceneId: string
+  query: string
+  userPrompt: string
+  capabilities: ProjectCapabilities
+  limit?: number
+}
+
+export interface IngestWebImageRequest {
+  projectId: string
+  sceneId: string
+  searchId: string
+  candidateId: string
+  userPrompt: string
+  capabilities: ProjectCapabilities
 }
 
 export interface StudioAntigravityRunRequest extends AntigravityRunRequest {
@@ -283,6 +351,8 @@ export interface ElectronAPI {
     request: StudioAntigravityRunRequest
   ) => Promise<AntigravityRunResult>
   cancelAntigravity: (requestId: string) => Promise<boolean>
+  searchWebImages: (request: SearchWebImagesRequest) => Promise<WebImageSearchResult>
+  ingestWebImage: (request: IngestWebImageRequest) => Promise<WebImageAsset>
   onAntigravityStream: (
     callback: (event: { requestId: string; stream: 'stdout' | 'stderr'; chunk: string }) => void
   ) => () => void

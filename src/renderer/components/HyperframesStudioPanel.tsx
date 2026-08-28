@@ -275,13 +275,16 @@ export default function HyperframesStudioPanel() {
       studioAgentRequestRef.current = requestId
       postAgentStatus('running', `Antigravity is working on ${label}...`, surface)
       try {
+        const editorState = useEditorStore.getState()
         const result = await window.electronAPI.runStudioAntigravity({
           requestId,
           projectId,
           sceneId: activeScene.id,
           prompt,
+          userPrompt: prompt,
+          capabilities: editorState.capabilities,
           conversationId: studioAgentConversationIdRef.current,
-          model: useEditorStore.getState().antigravityModel || undefined,
+          model: editorState.antigravityModel || undefined,
         })
         if (result.conversationId) {
           studioAgentConversationIdRef.current = result.conversationId

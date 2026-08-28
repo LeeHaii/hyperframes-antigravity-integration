@@ -25,9 +25,17 @@ import {
   AntigravityStatus,
   ChatReferenceImage,
   HyperframesStudioAppendResult,
+  ProjectCapabilities,
   SceneSegment,
+  WebImageAsset,
+  WebImageSearchResult,
 } from '../../types/editor'
 import { localMediaUrl } from '../services/localMedia'
+import {
+  deriveWebImageQuery,
+  detectWebImageSearchPermission,
+  resolveWebImageSearchCapability,
+} from '../../shared/imageSearchPolicy'
 
 const starterPrompts = [
   'Add a cinematic title reveal',
@@ -157,7 +165,8 @@ function buildAgentPrompt(
   request: string,
   history: AgentChatMessage[],
   referenceImages: ChatReferenceImage[],
-  compositionId: string
+  compositionId: string,
+  webImage?: WebImageAsset
 ) {
   const clipDurationSec =
     scene.hyperframes?.clipDurationSec || Math.max(0.1, scene.durationSec)
@@ -180,6 +189,15 @@ function buildAgentPrompt(
         .map((image, index) => `${index + 1}. ${image.path} (${image.name})`)
         .join('\n')
     : '(none)'
+  const selectedWebImage = webImage
+    ? `Selected and frozen web image (use this as actual composition media, not merely as style inspiration):
+- HTML src: ../${webImage.projectRelativePath}
+- local file to inspect: ${webImage.path}
+- source page: ${webImage.sourcePageUrl}
+- attribution: ${webImage.attribution}
+- dimensions: ${webImage.width}x${webImage.height}
+- license: ${webImage.license}`
+    : 'Selected and frozen web image: (none)'
 
   return `You are the motion-design agent inside Gravity Frames Studio. Create ONE NEW HyperFrames child composition. It will be saved as a separate file and appended to a master timeline.
 
@@ -192,7 +210,9 @@ Hard requirements:
 - Animations must be deterministic and seekable. Prefer a paused GSAP timeline registered in window.__timelines[compositionId]. Do not use setTimeout, Date, random values, autoplay loops, or wall-clock-only CSS animation.
 - Keep the exact child duration ${clipDurationSec} seconds. The HTML must work directly in @hyperframes/player and with the HyperFrames CLI.
 - Preserve any existing local media URL exactly unless the user asks to remove it.
+- When a selected and frozen web image is listed below, inspect it and use its exact relative HTML src. Never use its remote source URL in HTML.
 - Do not use shell commands, network APIs, cookies, localStorage, the parent window, or Electron APIs. CDN script tags for animation libraries are allowed.
+- A media URL literally present in the user's request is user-provided media and may be used exactly as given; it does not authorize searching for any other URL.
 - Filesystem access is restricted to calling the view_file tool on the exact visual reference files listed below. Never call find_by_name, grep_search, or run_command to locate them, and never search outside the current working directory.
 - Before the HTML fence, give a concise one-sentence summary. Do not output a diff.
 
@@ -205,6 +225,8 @@ Selected scene:
 Visual references (MANDATORY FIRST STEP — before designing, call the view_file tool on each of these exact image files, in order, and base your design on what you see):
 ${visualReferences}
 If view_file fails on a reference, continue with the remaining ones and mention it in your summary. Never guess a reference's contents and never search for these files elsewhere on disk.
+
+${selectedWebImage}
 
 Recent scene conversation:
 ${compactHistory || '(none)'}
@@ -223,6 +245,13 @@ type AntigravityChatProps = {
   ) => Promise<HyperframesStudioAppendResult>
 }
 
+type PendingWebImageSearch = {
+  request: string
+  referenceImages: ChatReferenceImage[]
+  capabilities: ProjectCapabilities
+  result: WebImageSearchResult
+}
+
 export default function AntigravityChat({
   compact = false,
   onCompositionGenerated,
@@ -234,11 +263,13 @@ export default function AntigravityChat({
     agentChat,
     antigravityConversationId,
     antigravityModel,
+    capabilities,
     updateScene,
     appendAgentChat,
     clearAgentChat,
     setAntigravityConversationId,
     setAntigravityModel,
+    setProjectCapabilities,
   } = useEditorStore(
     useShallow((state) => ({
       projectId: state.projectId,
@@ -247,11 +278,13 @@ export default function AntigravityChat({
       agentChat: state.agentChat,
       antigravityConversationId: state.antigravityConversationId,
       antigravityModel: state.antigravityModel,
+      capabilities: state.capabilities,
       updateScene: state.updateScene,
       appendAgentChat: state.appendAgentChat,
       clearAgentChat: state.clearAgentChat,
       setAntigravityConversationId: state.setAntigravityConversationId,
       setAntigravityModel: state.setAntigravityModel,
+      setProjectCapabilities: state.setProjectCapabilities,
     }))
   )
   const activeScene = scenes.find((scene) => scene.id === activeSceneId)
@@ -263,6 +296,11 @@ export default function AntigravityChat({
   const [isAddingReference, setIsAddingReference] = useState(false)
   const [referenceError, setReferenceError] = useState('')
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
+  const [pendingWebImageSearch, setPendingWebImageSearch] =
+    useState<PendingWebImageSearch | null>(null)
+  const [isSearchingWeb, setIsSearchingWeb] = useState(false)
+  const [isAgentSelectingWeb, setIsAgentSelectingWeb] = useState(false)
+  const [ingestingCandidateId, setIngestingCandidateId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const modelDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -428,25 +466,23 @@ export default function AntigravityChat({
     }
   }
 
-  const submit = async (event?: FormEvent) => {
-    event?.preventDefault()
-    const submittedReferences = [...referenceImages]
-    const request =
-      draft.trim() ||
-      (submittedReferences.length
-        ? 'Use the attached image as the visual reference for this scene.'
-        : '')
-    if (!request || !activeScene || !projectId || runningRequestId) return
-
+  const runAgentRequest = async (
+    request: string,
+    submittedReferences: ChatReferenceImage[],
+    requestCapabilities: ProjectCapabilities,
+    webImage?: WebImageAsset
+  ) => {
+    if (!activeScene || !projectId || runningRequestId) return
+    const allReferences = webImage
+      ? [...submittedReferences.filter((image) => image.path !== webImage.path), webImage]
+      : submittedReferences
     const userMessage: AgentChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       text: request,
       createdAt: new Date().toISOString(),
       sceneId: activeScene.id,
-      referenceImages: submittedReferences.length
-        ? submittedReferences
-        : undefined,
+      referenceImages: allReferences.length ? allReferences : undefined,
     }
     appendAgentChat(userMessage)
     setDraft('')
@@ -471,12 +507,15 @@ export default function AntigravityChat({
         projectId,
         conversationId: antigravityConversationId || undefined,
         model: antigravityModel || undefined,
+        userPrompt: request,
+        capabilities: requestCapabilities,
         prompt: buildAgentPrompt(
           activeScene,
           request,
           [...agentChat, userMessage],
-          submittedReferences,
-          compositionId
+          allReferences,
+          compositionId,
+          webImage
         ),
       })
       const html = extractHtml(result.text)
@@ -532,6 +571,152 @@ export default function AntigravityChat({
       })
     } finally {
       setRunningRequestId(null)
+      setActivity('')
+    }
+  }
+
+  const submit = async (event?: FormEvent) => {
+    event?.preventDefault()
+    const submittedReferences = [...referenceImages]
+    const request =
+      draft.trim() ||
+      (submittedReferences.length
+        ? 'Use the attached image as the visual reference for this scene.'
+        : '')
+    if (
+      !request ||
+      !activeScene ||
+      !projectId ||
+      runningRequestId ||
+      isSearchingWeb ||
+      pendingWebImageSearch
+    ) {
+      return
+    }
+
+    const decision = detectWebImageSearchPermission(request)
+    const webImageCapability = resolveWebImageSearchCapability(
+      request,
+      capabilities.web_image_search
+    )
+    const requestCapabilities: ProjectCapabilities = {
+      ...capabilities,
+      web_image_search: webImageCapability,
+    }
+    if (
+      webImageCapability.allowed !== capabilities.web_image_search.allowed ||
+      webImageCapability.reason !== capabilities.web_image_search.reason
+    ) {
+      setProjectCapabilities(requestCapabilities)
+    }
+
+    const requestsImage = /\b(?:images?|photos?|pictures?)\b/i.test(request)
+    const shouldSearch =
+      webImageCapability.allowed &&
+      submittedReferences.length === 0 &&
+      (decision.explicit || requestsImage)
+
+    if (shouldSearch) {
+      setIsSearchingWeb(true)
+      setReferenceError('')
+      setActivity('Searching Wikimedia Commons for image candidates…')
+      try {
+        const result = await window.electronAPI.searchWebImages({
+          projectId,
+          sceneId: activeScene.id,
+          query: deriveWebImageQuery(request, activeScene.transcriptText),
+          userPrompt: request,
+          capabilities: requestCapabilities,
+          limit: 8,
+        })
+        setPendingWebImageSearch({
+          request,
+          referenceImages: submittedReferences,
+          capabilities: requestCapabilities,
+          result,
+        })
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setIsSearchingWeb(false)
+        setActivity('')
+      }
+      return
+    }
+
+    await runAgentRequest(request, submittedReferences, requestCapabilities)
+  }
+
+  const selectWebImageCandidate = async (candidateId: string) => {
+    const pending = pendingWebImageSearch
+    if (!pending || !activeScene || !projectId || ingestingCandidateId) return
+    setIngestingCandidateId(candidateId)
+    setReferenceError('')
+    try {
+      const webImage = await window.electronAPI.ingestWebImage({
+        projectId,
+        sceneId: activeScene.id,
+        searchId: pending.result.searchId,
+        candidateId,
+        userPrompt: pending.request,
+        capabilities: pending.capabilities,
+      })
+      setPendingWebImageSearch(null)
+      await runAgentRequest(
+        pending.request,
+        pending.referenceImages,
+        pending.capabilities,
+        webImage
+      )
+    } catch (error) {
+      setReferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIngestingCandidateId(null)
+    }
+  }
+
+  const selectWebImageWithAgent = async () => {
+    const pending = pendingWebImageSearch
+    if (!pending || !projectId || !activeScene || isAgentSelectingWeb) return
+    setIsAgentSelectingWeb(true)
+    setReferenceError('')
+    setActivity('Antigravity is evaluating the image candidates…')
+    try {
+      const candidates = pending.result.candidates
+        .map(
+          (candidate, index) =>
+            `${index + 1}. id=${candidate.id}\nfile=${candidate.thumbnailPath}\ntitle=${candidate.title}\nsize=${candidate.width}x${candidate.height}\nlicense=${candidate.license}`
+        )
+        .join('\n\n')
+      const result = await window.electronAPI.runAntigravity({
+        requestId: crypto.randomUUID(),
+        projectId,
+        model: antigravityModel || undefined,
+        userPrompt: pending.request,
+        capabilities: pending.capabilities,
+        prompt: `You are selecting one image for a 1920x1080 motion-design composition.
+
+User request: ${pending.request}
+
+Inspect every exact local candidate file below with view_file. Judge subject relevance, clarity, landscape composition, usable negative space, and suitability for motion. Do not search for or download anything.
+
+${candidates}
+
+Return only JSON in this exact shape:
+{"selectedCandidateId":"commons_123","reason":"one short sentence"}`,
+      })
+      const selectedId = result.text.match(
+        /["']selectedCandidateId["']\s*:\s*["']([^"']+)["']/i
+      )?.[1]
+      const selected = pending.result.candidates.find(
+        (candidate) => candidate.id === selectedId
+      )
+      if (!selected) throw new Error('Antigravity did not return one of the candidate IDs.')
+      await selectWebImageCandidate(selected.id)
+    } catch (error) {
+      setReferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsAgentSelectingWeb(false)
       setActivity('')
     }
   }
@@ -681,6 +866,84 @@ export default function AntigravityChat({
         </div>
       </div>
 
+      {pendingWebImageSearch ? (
+        <div className="shrink-0 border-b border-neutral-800 bg-neutral-950 p-3">
+          <div className="mb-2 flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-semibold text-neutral-100">
+                Choose a web image
+              </div>
+              <div className="mt-0.5 text-[9px] text-neutral-500">
+                {pendingWebImageSearch.result.candidates.length} validated Wikimedia Commons
+                candidates for “{pendingWebImageSearch.result.query}”
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void selectWebImageWithAgent()}
+                disabled={Boolean(ingestingCandidateId) || isAgentSelectingWeb}
+                className="flex h-6 items-center gap-1.5 rounded-md border border-[#3ce6ac]/25 bg-[#3ce6ac]/10 px-2 text-[8px] font-medium text-[#3ce6ac] hover:bg-[#3ce6ac]/15 disabled:opacity-40"
+                title="Let Antigravity inspect all candidate previews and choose one"
+              >
+                {isAgentSelectingWeb ? (
+                  <LoaderCircle className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Bot className="h-3 w-3" />
+                )}
+                Let agent choose
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingWebImageSearch(null)}
+                disabled={Boolean(ingestingCandidateId) || isAgentSelectingWeb}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-40"
+                title="Cancel web image selection"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="custom-scrollbar grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
+            {pendingWebImageSearch.result.candidates.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                onClick={() => void selectWebImageCandidate(candidate.id)}
+                disabled={Boolean(ingestingCandidateId) || isAgentSelectingWeb}
+                className="group overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 text-left transition hover:border-[#3ce6ac]/60 disabled:opacity-60"
+                title={`${candidate.title}\n${candidate.attribution}`}
+              >
+                <div className="relative aspect-video bg-neutral-900">
+                  <img
+                    src={localMediaUrl(candidate.thumbnailPath)}
+                    alt={candidate.title}
+                    className="h-full w-full object-cover"
+                  />
+                  {ingestingCandidateId === candidate.id ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/65">
+                      <LoaderCircle className="h-5 w-5 animate-spin text-[#3ce6ac]" />
+                    </div>
+                  ) : null}
+                </div>
+                <div className="p-2">
+                  <div className="truncate text-[9px] font-medium text-neutral-200">
+                    {candidate.title}
+                  </div>
+                  <div className="mt-0.5 truncate text-[8px] text-neutral-500">
+                    {candidate.width}×{candidate.height} · {candidate.license}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-[8px] text-neutral-600">
+            The selected original will be downloaded, validated, frozen locally, and recorded
+            with its source and license.
+          </div>
+        </div>
+      ) : null}
+
       <div ref={scrollRef} className="custom-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
         {sceneMessages.length === 0 && (
           <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3">
@@ -728,7 +991,7 @@ export default function AntigravityChat({
             {message.text}
           </div>
         ))}
-        {runningRequestId && (
+        {(runningRequestId || isSearchingWeb) && (
           <div className="flex items-center gap-2 text-[10px] text-neutral-500">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin text-[#3ce6ac]" />
             <span className="truncate">{activity || 'Working…'}</span>
@@ -780,7 +1043,12 @@ export default function AntigravityChat({
                 void submit()
               }
             }}
-            disabled={!activeScene || Boolean(runningRequestId)}
+            disabled={
+              !activeScene ||
+              Boolean(runningRequestId) ||
+              isSearchingWeb ||
+              Boolean(pendingWebImageSearch)
+            }
             rows={compact ? 2 : 3}
             placeholder="Make the headline arrive like a camera flash…"
             className="block w-full resize-none bg-transparent px-1 text-[11px] text-neutral-200 outline-none placeholder:text-neutral-600"
@@ -794,7 +1062,9 @@ export default function AntigravityChat({
                   !projectId ||
                   isAddingReference ||
                   referenceImages.length >= 4 ||
-                  Boolean(runningRequestId)
+                  Boolean(runningRequestId) ||
+                  isSearchingWeb ||
+                  Boolean(pendingWebImageSearch)
                 }
                 className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[9px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-40"
                 title="Browse for reference images, or paste one with Ctrl+V"
@@ -835,7 +1105,9 @@ export default function AntigravityChat({
                   disabled={
                     (!draft.trim() && referenceImages.length === 0) ||
                     !activeScene ||
-                    isAddingReference
+                    isAddingReference ||
+                    isSearchingWeb ||
+                    Boolean(pendingWebImageSearch)
                   }
                   className="flex h-7 w-7 items-center justify-center rounded-md bg-[#3ce6ac] text-neutral-950 hover:brightness-110 disabled:bg-neutral-800 disabled:text-neutral-600"
                 >

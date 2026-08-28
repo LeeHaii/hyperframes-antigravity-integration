@@ -21,6 +21,7 @@
     "dev": "vite",
     "dev:web": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
+    "test:image-search-policy": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/shared/imageSearchPolicy.test.ts",
     "build:app": "tsc && vite build && remotion bundle src/remotion/index.ts --out-dir=dist-remotion",
     "build": "tsc && vite build && remotion bundle src/remotion/index.ts --out-dir=dist-remotion && electron-builder",
     "preview": "vite preview"

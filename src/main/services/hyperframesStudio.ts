@@ -35,6 +35,10 @@ type StudioHttpResult = {
   body: string
 }
 
+const STUDIO_REQUEST_TIMEOUT_MS = 20_000
+const STUDIO_WRITE_ATTEMPTS = 3
+const studioWriteQueues = new WeakMap<ActiveStudio, Promise<void>>()
+
 export type AppendStudioCompositionResult = {
   masterHtml: string
   compositionPath: string
@@ -391,8 +395,14 @@ function requestStudioServer(
         })
       }
     )
-    request.setTimeout(5_000, () => {
-      request.destroy(new Error('HyperFrames Studio save timed out.'))
+    request.setTimeout(STUDIO_REQUEST_TIMEOUT_MS, () => {
+      request.destroy(
+        new Error(
+          `HyperFrames Studio ${method} ${requestPath} timed out after ${
+            STUDIO_REQUEST_TIMEOUT_MS / 1_000
+          } seconds.`
+        )
+      )
     })
     request.once('error', reject)
     if (body !== undefined) request.write(body)
@@ -400,7 +410,16 @@ function requestStudioServer(
   })
 }
 
-async function writeStudioProjectFile(
+function transientStudioRequestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /timed out|ECONNRESET|ECONNREFUSED|socket hang up/i.test(message)
+}
+
+function waitForStudioRetry(attempt: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, attempt * 350))
+}
+
+async function writeStudioProjectFileAttempt(
   studio: ActiveStudio,
   projectFilePath: string,
   html: string
@@ -422,7 +441,9 @@ async function writeStudioProjectFile(
   let version: string | undefined
   if (current.status === 200) {
     try {
-      version = JSON.parse(current.body)?.version
+      const parsed = JSON.parse(current.body)
+      version = parsed?.version
+      if (parsed?.content === html) return
     } catch {
       throw new Error('HyperFrames Studio returned an invalid file version.')
     }
@@ -453,6 +474,38 @@ async function writeStudioProjectFile(
         detail ? `: ${detail.slice(0, 400)}` : '.'
       }`
     )
+  }
+}
+
+async function writeStudioProjectFile(
+  studio: ActiveStudio,
+  projectFilePath: string,
+  html: string
+) {
+  const previous = studioWriteQueues.get(studio) || Promise.resolve()
+  const queued = previous
+    .catch(() => undefined)
+    .then(async () => {
+      let lastError: unknown
+      for (let attempt = 1; attempt <= STUDIO_WRITE_ATTEMPTS; attempt += 1) {
+        try {
+          await writeStudioProjectFileAttempt(studio, projectFilePath, html)
+          return
+        } catch (error) {
+          lastError = error
+          if (!transientStudioRequestError(error) || attempt === STUDIO_WRITE_ATTEMPTS) {
+            throw error
+          }
+          await waitForStudioRetry(attempt)
+        }
+      }
+      throw lastError
+    })
+  studioWriteQueues.set(studio, queued)
+  try {
+    await queued
+  } finally {
+    if (studioWriteQueues.get(studio) === queued) studioWriteQueues.delete(studio)
   }
 }
 

@@ -47,6 +47,12 @@ export function createAnimationProject(name = 'Untitled animation'): ProjectDocu
       outlineWidth: 3,
       position: 'bottom',
     },
+    capabilities: {
+      web_image_search: {
+        allowed: false,
+        reason: 'Web image search was not explicitly authorized by the user.',
+      },
+    },
     visualGapsFilled: true,
   }
 }

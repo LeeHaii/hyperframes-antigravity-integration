@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('antigravity-run-studio', request),
   cancelAntigravity: (requestId: string) =>
     ipcRenderer.invoke('antigravity-cancel', requestId),
+  searchWebImages: (request: any) => ipcRenderer.invoke('web-image-search', request),
+  ingestWebImage: (request: any) => ipcRenderer.invoke('web-image-ingest', request),
   onAntigravityStream: (callback: (event: any) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: any) => callback(value)
     ipcRenderer.on('antigravity-stream', listener)

@@ -33,6 +33,15 @@ import {
   readHyperframesStudioHtml,
   writeHyperframesStudioHtml,
 } from './services/hyperframesStudio'
+import {
+  ingestWebImage,
+  searchWebImages,
+  writeWebImageSearchBrief,
+} from './services/webImageSearch'
+import {
+  DEFAULT_WEB_IMAGE_SEARCH_CAPABILITY,
+  detectWebImageSearchPermission,
+} from '../shared/imageSearchPolicy'
 import fs from 'fs/promises'
 import {
   AppSettings,
@@ -40,6 +49,7 @@ import {
   BatchExportResult,
   ExportVideoRequest,
   ProjectDocument,
+  WebImageSearchCapability,
 } from '../types/editor'
 
 let mainWindow: BrowserWindow | null = null
@@ -49,6 +59,37 @@ let rendererOriginPromise: Promise<string> | null = null
 let studioDownloadHandlerRegistered = false
 
 registerLocalMediaScheme()
+
+async function normalizedRequestCapability(request: any, projectId: string) {
+  const decision = detectWebImageSearchPermission(String(request?.userPrompt || ''))
+  if (decision.explicit) {
+    return { allowed: decision.allowed, reason: decision.reason }
+  }
+  try {
+    const persisted = JSON.parse(
+      await fs.readFile(await getProjectPath(projectId), 'utf8')
+    ) as ProjectDocument
+    const capability = persisted.capabilities?.web_image_search
+    if (capability) return capability
+  } catch {
+    // A missing project document cannot grant a network capability.
+  }
+  return DEFAULT_WEB_IMAGE_SEARCH_CAPABILITY
+}
+
+function promptWithImageSearchPolicy(prompt: string, capability: WebImageSearchCapability) {
+  return `Project capability (normalized by Gravity Frames; do not reinterpret the user prompt):
+${JSON.stringify({ capabilities: { web_image_search: capability } }, null, 2)}
+
+Policy enforcement:
+- Web-image discovery is performed only by Gravity Frames' guarded host integration.
+- Do not use shell commands, browser search, fetch, curl, or any other network tool to discover or download images.
+- If web_image_search.allowed is false, do not request or use agent-discovered web images.
+- User-provided local references and already-frozen files are allowed.
+- A URL literally supplied by the user is user-provided media, not permission to discover other URLs; it may be used exactly as given.
+
+${prompt}`
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -202,9 +243,11 @@ ipcMain.handle('antigravity-run', async (event, request) => {
     'agent-workspace'
   )
   await fs.mkdir(workingDirectory, { recursive: true })
+  const capability = await normalizedRequestCapability(request, projectId)
+  await writeWebImageSearchBrief(workingDirectory, capability)
   return await runAntigravity(
     String(request?.requestId || ''),
-    String(request?.prompt || ''),
+    promptWithImageSearchPolicy(String(request?.prompt || ''), capability),
     workingDirectory,
     request?.conversationId ? String(request.conversationId) : undefined,
     (stream, chunk) => {
@@ -229,9 +272,11 @@ ipcMain.handle('antigravity-run-studio', async (event, request) => {
     sceneId
   )
   await fs.mkdir(workingDirectory, { recursive: true })
+  const capability = await normalizedRequestCapability(request, projectId)
+  await writeWebImageSearchBrief(workingDirectory, capability)
   return await runAntigravity(
     String(request?.requestId || ''),
-    String(request?.prompt || ''),
+    promptWithImageSearchPolicy(String(request?.prompt || ''), capability),
     workingDirectory,
     request?.conversationId ? String(request.conversationId) : undefined,
     (stream, chunk) => {
@@ -245,6 +290,45 @@ ipcMain.handle('antigravity-run-studio', async (event, request) => {
     },
     request?.model ? String(request.model) : undefined
   )
+})
+
+ipcMain.handle('web-image-search', async (_, request) => {
+  const projectId = String(request?.projectId || '')
+  const sceneId = String(request?.sceneId || '')
+  if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Invalid project id.')
+  if (!/^[a-zA-Z0-9_-]+$/.test(sceneId)) throw new Error('Invalid scene id.')
+  const projectDirectory = hyperframesStudioDirectory(
+    await getStudioProjectsDirectory(),
+    projectId,
+    sceneId
+  )
+  await fs.mkdir(projectDirectory, { recursive: true })
+  const capability = await normalizedRequestCapability(request, projectId)
+  await writeWebImageSearchBrief(projectDirectory, capability)
+  return await searchWebImages({
+    projectDirectory,
+    query: String(request?.query || ''),
+    limit: Number(request?.limit || 8),
+  })
+})
+
+ipcMain.handle('web-image-ingest', async (_, request) => {
+  const projectId = String(request?.projectId || '')
+  const sceneId = String(request?.sceneId || '')
+  if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Invalid project id.')
+  if (!/^[a-zA-Z0-9_-]+$/.test(sceneId)) throw new Error('Invalid scene id.')
+  const projectDirectory = hyperframesStudioDirectory(
+    await getStudioProjectsDirectory(),
+    projectId,
+    sceneId
+  )
+  const capability = await normalizedRequestCapability(request, projectId)
+  await writeWebImageSearchBrief(projectDirectory, capability)
+  return await ingestWebImage({
+    projectDirectory,
+    searchId: String(request?.searchId || ''),
+    candidateId: String(request?.candidateId || ''),
+  })
 })
 
 function registerStudioRenderDownloads() {
